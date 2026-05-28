@@ -1,0 +1,446 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const nlp = @import("nlp");
+
+const version = "0.1.0";
+
+fn printUsage(writer: *std.Io.Writer) !void {
+    try writer.print(
+        \\Usage: lingua <command> [options] [text]
+        \\
+        \\Natural language processing CLI powered by native macOS APIs.
+        \\Version {s} ({s})
+        \\
+        \\Commands:
+        \\  detect     Identify the language of input text
+        \\  sentiment  Analyze text sentiment (-1.0 to 1.0)
+        \\  entities   Extract structured data (phones, emails, dates, addresses, URLs)
+        \\  ner        Extract named entities (people, places, organizations)
+        \\  pos        Part-of-speech tagging
+        \\  tokenize   Tokenize text into words, sentences, or paragraphs
+        \\  help       Show this help message
+        \\
+        \\Input:
+        \\  Text can be provided as a trailing argument or piped via stdin.
+        \\  echo "Hello world" | lingua detect
+        \\  lingua detect "Hello world"
+        \\
+        \\Global options:
+        \\  --json               Output as JSON
+        \\  --version, -v        Show version
+        \\  --help, -h           Show this help message
+        \\
+        \\Command-specific options:
+        \\  detect:
+        \\    --top=N            Show top N candidates (default: 1)
+        \\
+        \\  sentiment:
+        \\    --per-sentence     Score each sentence individually
+        \\
+        \\  tokenize:
+        \\    --unit=UNIT        word, sentence, paragraph (default: word)
+        \\
+        \\  entities:
+        \\    --type=TYPE        Filter: phone,email,address,date,url,transit,all (default: all)
+        \\
+        \\Created by George Mandis <george@mand.is>
+        \\
+    , .{ version, @tagName(builtin.os.tag) });
+}
+
+fn writeJsonString(writer: *std.Io.Writer, s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try writer.print("\\\"", .{}),
+            '\\' => try writer.print("\\\\", .{}),
+            '\n' => try writer.print("\\n", .{}),
+            '\r' => try writer.print("\\r", .{}),
+            '\t' => try writer.print("\\t", .{}),
+            0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F => try writer.print("\\u{X:0>4}", .{c}),
+            else => try writer.print("{c}", .{c}),
+        }
+    }
+}
+
+fn readStdin(allocator: std.mem.Allocator, init: std.process.Init) ![]const u8 {
+    const stdin_file = std.Io.File.stdin();
+    const stdin_is_tty = stdin_file.isTty(init.io) catch false;
+    if (stdin_is_tty) return error.NoInput;
+
+    var stdin_buf: [4096]u8 = undefined;
+    var reader = stdin_file.readerStreaming(init.io, &stdin_buf);
+
+    var result: std.ArrayList(u8) = .empty;
+    while (true) {
+        const byte = reader.interface.takeByte() catch break;
+        result.append(allocator, byte) catch return error.OutOfMemory;
+    }
+
+    // Trim trailing whitespace
+    var data = result.toOwnedSlice(allocator) catch return error.OutOfMemory;
+    var end = data.len;
+    while (end > 0 and (data[end - 1] == '\n' or data[end - 1] == '\r' or data[end - 1] == ' ')) {
+        end -= 1;
+    }
+    if (end < data.len) {
+        const trimmed = allocator.dupe(u8, data[0..end]) catch return error.OutOfMemory;
+        allocator.free(data);
+        return trimmed;
+    }
+    return data;
+}
+
+fn getInputText(allocator: std.mem.Allocator, args_iter: anytype, init: std.process.Init) ![]const u8 {
+    // Check for remaining positional arg
+    if (args_iter.next()) |arg| {
+        if (!std.mem.startsWith(u8, arg, "-")) {
+            return allocator.dupe(u8, arg) catch return error.OutOfMemory;
+        }
+    }
+
+    // Fall back to stdin
+    return readStdin(allocator, init);
+}
+
+// ---------------------------------------------------------------------------
+// Command handlers
+// ---------------------------------------------------------------------------
+
+fn cmdDetect(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+    top_n: usize,
+) !void {
+    const results = nlp.detectLanguage(allocator, text, top_n) catch |err| {
+        return printNlpError(writer, err, json_mode);
+    };
+    defer nlp.freeLanguageResults(allocator, results);
+
+    if (json_mode) {
+        if (results.len == 1) {
+            try writer.print("{{\"language\":\"", .{});
+            try writeJsonString(writer, results[0].language);
+            try writer.print("\",\"confidence\":{d:.4}}}\n", .{results[0].confidence});
+        } else {
+            try writer.print("[", .{});
+            for (results, 0..) |r, i| {
+                if (i > 0) try writer.print(",", .{});
+                try writer.print("{{\"language\":\"", .{});
+                try writeJsonString(writer, r.language);
+                try writer.print("\",\"confidence\":{d:.4}}}", .{r.confidence});
+            }
+            try writer.print("]\n", .{});
+        }
+    } else {
+        for (results) |r| {
+            try writer.print("{s} [{d:.2}]\n", .{ r.language, r.confidence });
+        }
+    }
+}
+
+fn cmdSentiment(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+    per_sentence: bool,
+) !void {
+    const results = nlp.analyzeSentiment(allocator, text, per_sentence) catch |err| {
+        return printNlpError(writer, err, json_mode);
+    };
+    defer nlp.freeSentimentResults(allocator, results);
+
+    if (json_mode) {
+        if (!per_sentence and results.len == 1) {
+            try writer.print("{{\"score\":{d:.4}}}\n", .{results[0].score});
+        } else {
+            try writer.print("[", .{});
+            for (results, 0..) |r, i| {
+                if (i > 0) try writer.print(",", .{});
+                try writer.print("{{\"text\":\"", .{});
+                try writeJsonString(writer, r.text);
+                try writer.print("\",\"score\":{d:.4}}}", .{r.score});
+            }
+            try writer.print("]\n", .{});
+        }
+    } else {
+        if (!per_sentence and results.len == 1) {
+            try writer.print("{d:.4}\n", .{results[0].score});
+        } else {
+            for (results) |r| {
+                try writer.print("{d:.4}\t{s}\n", .{ r.score, r.text });
+            }
+        }
+    }
+}
+
+fn cmdEntities(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+    type_filter: ?[]const u8,
+) !void {
+    const results = nlp.detectEntities(allocator, text) catch |err| {
+        return printNlpError(writer, err, json_mode);
+    };
+    defer nlp.freeDetectedEntities(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        var first = true;
+        for (results) |r| {
+            if (type_filter) |filter| {
+                if (!std.mem.eql(u8, filter, "all") and !std.mem.eql(u8, filter, r.entity_type)) continue;
+            }
+            if (!first) try writer.print(",", .{});
+            try writer.print("{{\"type\":\"", .{});
+            try writeJsonString(writer, r.entity_type);
+            try writer.print("\",\"value\":\"", .{});
+            try writeJsonString(writer, r.value);
+            try writer.print("\",\"range\":[{d},{d}]}}", .{ r.range_start, r.range_length });
+            first = false;
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results) |r| {
+            if (type_filter) |filter| {
+                if (!std.mem.eql(u8, filter, "all") and !std.mem.eql(u8, filter, r.entity_type)) continue;
+            }
+            try writer.print("{s}: {s}\n", .{ r.entity_type, r.value });
+        }
+    }
+}
+
+fn cmdNer(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+) !void {
+    const results = nlp.extractNamedEntities(allocator, text) catch |err| {
+        return printNlpError(writer, err, json_mode);
+    };
+    defer nlp.freeEntityTags(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(",", .{});
+            try writer.print("{{\"token\":\"", .{});
+            try writeJsonString(writer, r.token);
+            try writer.print("\",\"tag\":\"", .{});
+            try writeJsonString(writer, r.tag);
+            try writer.print("\",\"range\":[{d},{d}]}}", .{ r.range_start, r.range_length });
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results) |r| {
+            try writer.print("{s}: {s}\n", .{ r.tag, r.token });
+        }
+    }
+}
+
+fn cmdPos(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+) !void {
+    const results = nlp.tagPartsOfSpeech(allocator, text) catch |err| {
+        return printNlpError(writer, err, json_mode);
+    };
+    defer nlp.freePosTags(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(",", .{});
+            try writer.print("{{\"token\":\"", .{});
+            try writeJsonString(writer, r.token);
+            try writer.print("\",\"tag\":\"", .{});
+            try writeJsonString(writer, r.tag);
+            try writer.print("\"}}", .{});
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(" ", .{});
+            try writer.print("{s}/{s}", .{ r.token, r.tag });
+        }
+        try writer.print("\n", .{});
+    }
+}
+
+fn cmdTokenize(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+    unit: nlp.TokenUnit,
+) !void {
+    const results = nlp.tokenize(allocator, text, unit) catch |err| {
+        return printNlpError(writer, err, json_mode);
+    };
+    defer nlp.freeTokenResults(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(",", .{});
+            try writer.print("\"", .{});
+            try writeJsonString(writer, r.token);
+            try writer.print("\"", .{});
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results) |r| {
+            try writer.print("{s}\n", .{r.token});
+        }
+    }
+}
+
+fn printNlpError(writer: *std.Io.Writer, err: nlp.NlpError, json_mode: bool) !void {
+    const msg: []const u8 = switch (err) {
+        nlp.NlpError.FrameworkUnavailable => "NaturalLanguage framework not available",
+        nlp.NlpError.DetectionFailed => "Detection failed",
+        nlp.NlpError.OutOfMemory => "Out of memory",
+        nlp.NlpError.UnsupportedPlatform => "Unsupported platform",
+    };
+    if (json_mode) {
+        try writer.print("{{\"error\":\"{s}\"}}\n", .{msg});
+    } else {
+        try writer.print("Error: {s}\n", .{msg});
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+pub fn main(init: std.process.Init) !void {
+    const stdout_file = std.Io.File.stdout();
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout = stdout_file.writerStreaming(init.io, &stdout_buf);
+
+    const stderr_file = std.Io.File.stderr();
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr = stderr_file.writerStreaming(init.io, &stderr_buf);
+
+    const allocator = init.gpa;
+
+    var args_iter = try init.minimal.args.iterateAllocator(allocator);
+    defer args_iter.deinit();
+    _ = args_iter.next(); // skip program name
+
+    // Get command
+    const command = args_iter.next() orelse {
+        try printUsage(&stdout.interface);
+        try stdout.interface.flush();
+        return;
+    };
+
+    if (std.mem.eql(u8, command, "--help") or std.mem.eql(u8, command, "-h") or std.mem.eql(u8, command, "help")) {
+        try printUsage(&stdout.interface);
+        try stdout.interface.flush();
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "--version") or std.mem.eql(u8, command, "-v")) {
+        try stdout.interface.print("lingua " ++ version ++ " (" ++ @tagName(builtin.os.tag) ++ ")\n", .{});
+        try stdout.interface.flush();
+        return;
+    }
+
+    // Parse command-specific flags
+    var json_mode = false;
+    var top_n: usize = 1;
+    var per_sentence = false;
+    var token_unit: nlp.TokenUnit = .word;
+    var type_filter: ?[]const u8 = null;
+    var inline_text: ?[]const u8 = null;
+
+    while (args_iter.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            json_mode = true;
+        } else if (std.mem.startsWith(u8, arg, "--top=")) {
+            top_n = std.fmt.parseInt(usize, arg["--top=".len..], 10) catch {
+                try stderr.interface.print("Error: invalid --top value\n", .{});
+                try stderr.interface.flush();
+                std.process.exit(2);
+            };
+            if (top_n == 0) top_n = 1;
+        } else if (std.mem.eql(u8, arg, "--per-sentence")) {
+            per_sentence = true;
+        } else if (std.mem.startsWith(u8, arg, "--unit=")) {
+            const unit_str = arg["--unit=".len..];
+            if (std.mem.eql(u8, unit_str, "word")) {
+                token_unit = .word;
+            } else if (std.mem.eql(u8, unit_str, "sentence")) {
+                token_unit = .sentence;
+            } else if (std.mem.eql(u8, unit_str, "paragraph")) {
+                token_unit = .paragraph;
+            } else {
+                try stderr.interface.print("Error: unknown unit '{s}' (use word, sentence, or paragraph)\n", .{unit_str});
+                try stderr.interface.flush();
+                std.process.exit(2);
+            }
+        } else if (std.mem.startsWith(u8, arg, "--type=")) {
+            type_filter = arg["--type=".len..];
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            try stderr.interface.print("Error: unknown flag: {s}\n", .{arg});
+            try stderr.interface.flush();
+            std.process.exit(2);
+        } else {
+            // Positional argument = inline text
+            if (inline_text == null) {
+                inline_text = arg;
+            }
+        }
+    }
+
+    // Get input text
+    const text = if (inline_text) |t|
+        allocator.dupe(u8, t) catch {
+            try stderr.interface.print("Error: out of memory\n", .{});
+            try stderr.interface.flush();
+            std.process.exit(1);
+        }
+    else
+        readStdin(allocator, init) catch {
+            try stderr.interface.print("Error: no input text. Provide text as an argument or pipe via stdin.\n", .{});
+            try stderr.interface.flush();
+            std.process.exit(1);
+        };
+    defer allocator.free(text);
+
+    if (text.len == 0) {
+        try stderr.interface.print("Error: empty input\n", .{});
+        try stderr.interface.flush();
+        std.process.exit(1);
+    }
+
+    // Dispatch to command handler
+    if (std.mem.eql(u8, command, "detect")) {
+        try cmdDetect(&stdout.interface, allocator, text, json_mode, top_n);
+    } else if (std.mem.eql(u8, command, "sentiment")) {
+        try cmdSentiment(&stdout.interface, allocator, text, json_mode, per_sentence);
+    } else if (std.mem.eql(u8, command, "entities")) {
+        try cmdEntities(&stdout.interface, allocator, text, json_mode, type_filter);
+    } else if (std.mem.eql(u8, command, "ner")) {
+        try cmdNer(&stdout.interface, allocator, text, json_mode);
+    } else if (std.mem.eql(u8, command, "pos")) {
+        try cmdPos(&stdout.interface, allocator, text, json_mode);
+    } else if (std.mem.eql(u8, command, "tokenize")) {
+        try cmdTokenize(&stdout.interface, allocator, text, json_mode, token_unit);
+    } else {
+        try stderr.interface.print("Error: unknown command '{s}'\n\n", .{command});
+        try printUsage(&stderr.interface);
+        try stderr.interface.flush();
+        std.process.exit(2);
+    }
+
+    try stdout.interface.flush();
+}
