@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const nlp = @import("nlp");
 
-const version = "0.1.0";
+const version = "0.2.0";
 
 fn printUsage(writer: *std.Io.Writer) !void {
     try writer.print(
@@ -16,6 +16,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  sentiment  Analyze text sentiment (-1.0 to 1.0)
         \\  entities   Extract structured data (phones, emails, dates, addresses, URLs)
         \\  ner        Extract named entities (people, places, organizations)
+        \\  lemma      Lemmatize words (base/dictionary forms)
         \\  pos        Part-of-speech tagging
         \\  tokenize   Tokenize text into words, sentences, or paragraphs
         \\  help       Show this help message
@@ -39,6 +40,9 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\
         \\  tokenize:
         \\    --unit=UNIT        word, sentence, paragraph (default: word)
+        \\
+        \\  ner:
+        \\    --merge            Merge adjacent tokens with the same entity tag
         \\
         \\  entities:
         \\    --type=TYPE        Filter: phone,email,address,date,url,transit,all (default: all)
@@ -219,15 +223,78 @@ fn cmdNer(
     allocator: std.mem.Allocator,
     text: []const u8,
     json_mode: bool,
+    merge: bool,
 ) !void {
-    const results = nlp.extractNamedEntities(allocator, text) catch |err| {
+    const raw_results = nlp.extractNamedEntities(allocator, text) catch |err| {
         return printNlpError(writer, err, json_mode);
     };
-    defer nlp.freeEntityTags(allocator, results);
+
+    if (!merge) {
+        defer nlp.freeEntityTags(allocator, raw_results);
+        if (json_mode) {
+            try writer.print("[", .{});
+            for (raw_results, 0..) |r, i| {
+                if (i > 0) try writer.print(",", .{});
+                try writer.print("{{\"token\":\"", .{});
+                try writeJsonString(writer, r.token);
+                try writer.print("\",\"tag\":\"", .{});
+                try writeJsonString(writer, r.tag);
+                try writer.print("\",\"range\":[{d},{d}]}}", .{ r.range_start, r.range_length });
+            }
+            try writer.print("]\n", .{});
+        } else {
+            for (raw_results) |r| {
+                try writer.print("{s}: {s}\n", .{ r.tag, r.token });
+            }
+        }
+        return;
+    }
+
+    // Merge adjacent tokens with the same tag
+    defer nlp.freeEntityTags(allocator, raw_results);
+    var merged: std.ArrayList(nlp.EntityTag) = .empty;
+    defer {
+        for (merged.items) |m| {
+            allocator.free(m.token);
+            // tag is shared/duped below, free it
+            allocator.free(m.tag);
+        }
+        merged.deinit(allocator);
+    }
+
+    for (raw_results) |r| {
+        if (merged.items.len > 0) {
+            const prev = &merged.items[merged.items.len - 1];
+            if (std.mem.eql(u8, prev.tag, r.tag) and
+                (prev.range_start + prev.range_length) <= r.range_start and
+                r.range_start - (prev.range_start + prev.range_length) <= 1)
+            {
+                // Merge: extend the token text
+                const gap_len = r.range_start - (prev.range_start + prev.range_length);
+                const new_len = prev.token.len + gap_len + r.token.len;
+                const new_token = allocator.alloc(u8, new_len) catch continue;
+                @memcpy(new_token[0..prev.token.len], prev.token);
+                if (gap_len > 0) {
+                    new_token[prev.token.len] = ' ';
+                }
+                @memcpy(new_token[prev.token.len + gap_len ..], r.token);
+                allocator.free(prev.token);
+                prev.token = new_token;
+                prev.range_length = (r.range_start + r.range_length) - prev.range_start;
+                continue;
+            }
+        }
+        merged.append(allocator, .{
+            .token = allocator.dupe(u8, r.token) catch continue,
+            .tag = allocator.dupe(u8, r.tag) catch continue,
+            .range_start = r.range_start,
+            .range_length = r.range_length,
+        }) catch continue;
+    }
 
     if (json_mode) {
         try writer.print("[", .{});
-        for (results, 0..) |r, i| {
+        for (merged.items, 0..) |r, i| {
             if (i > 0) try writer.print(",", .{});
             try writer.print("{{\"token\":\"", .{});
             try writeJsonString(writer, r.token);
@@ -237,9 +304,44 @@ fn cmdNer(
         }
         try writer.print("]\n", .{});
     } else {
-        for (results) |r| {
+        for (merged.items) |r| {
             try writer.print("{s}: {s}\n", .{ r.tag, r.token });
         }
+    }
+}
+
+fn cmdLemma(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+) !void {
+    const results = nlp.lemmatize(allocator, text) catch |err| {
+        return printNlpError(writer, err, json_mode);
+    };
+    defer nlp.freeLemmaResults(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(",", .{});
+            try writer.print("{{\"token\":\"", .{});
+            try writeJsonString(writer, r.token);
+            try writer.print("\",\"lemma\":\"", .{});
+            try writeJsonString(writer, r.lemma);
+            try writer.print("\"}}", .{});
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(" ", .{});
+            if (std.mem.eql(u8, r.token, r.lemma)) {
+                try writer.print("{s}", .{r.token});
+            } else {
+                try writer.print("{s}/{s}", .{ r.token, r.lemma });
+            }
+        }
+        try writer.print("\n", .{});
     }
 }
 
@@ -360,6 +462,7 @@ pub fn main(init: std.process.Init) !void {
     var per_sentence = false;
     var token_unit: nlp.TokenUnit = .word;
     var type_filter: ?[]const u8 = null;
+    var merge_entities = false;
     var inline_text: ?[]const u8 = null;
 
     while (args_iter.next()) |arg| {
@@ -387,6 +490,8 @@ pub fn main(init: std.process.Init) !void {
                 try stderr.interface.flush();
                 std.process.exit(2);
             }
+        } else if (std.mem.eql(u8, arg, "--merge")) {
+            merge_entities = true;
         } else if (std.mem.startsWith(u8, arg, "--type=")) {
             type_filter = arg["--type=".len..];
         } else if (std.mem.startsWith(u8, arg, "-")) {
@@ -430,7 +535,9 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, command, "entities")) {
         try cmdEntities(&stdout.interface, allocator, text, json_mode, type_filter);
     } else if (std.mem.eql(u8, command, "ner")) {
-        try cmdNer(&stdout.interface, allocator, text, json_mode);
+        try cmdNer(&stdout.interface, allocator, text, json_mode, merge_entities);
+    } else if (std.mem.eql(u8, command, "lemma")) {
+        try cmdLemma(&stdout.interface, allocator, text, json_mode);
     } else if (std.mem.eql(u8, command, "pos")) {
         try cmdPos(&stdout.interface, allocator, text, json_mode);
     } else if (std.mem.eql(u8, command, "tokenize")) {

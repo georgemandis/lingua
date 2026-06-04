@@ -331,6 +331,62 @@ pub fn extractNamedEntities(allocator: std.mem.Allocator, text: []const u8) nlp.
 }
 
 // ---------------------------------------------------------------------------
+// Lemmatization (NLTagger with .lemma)
+// ---------------------------------------------------------------------------
+
+pub fn lemmatize(allocator: std.mem.Allocator, text: []const u8) nlp.NlpError![]nlp.LemmaResult {
+    const pool = objc.autoreleasePoolPush();
+    defer objc.autoreleasePoolPop(pool);
+
+    const NLTagger = objc.getClass("NLTagger") orelse
+        return nlp.NlpError.FrameworkUnavailable;
+
+    const scheme = objc.nsString("Lemma");
+    const NSArray = objc.getClass("NSArray") orelse return nlp.NlpError.FrameworkUnavailable;
+    const schemes = objc.msgSend(objc.id, NSArray, objc.sel("arrayWithObject:"), .{scheme});
+
+    const tagger = objc.msgSend(objc.id, NLTagger, objc.sel("alloc"), .{});
+    const tagger_init = objc.msgSend(objc.id, tagger, objc.sel("initWithTagSchemes:"), .{schemes});
+
+    const ns_text = createNSStringFromSlice(text) orelse return nlp.NlpError.DetectionFailed;
+    objc.msgSend(void, tagger_init, objc.sel("setString:"), .{ns_text});
+
+    const tokens = try tokenize(allocator, text, .word);
+    defer {
+        for (tokens) |t| allocator.free(t.token);
+        allocator.free(tokens);
+    }
+
+    var results = allocator.alloc(nlp.LemmaResult, tokens.len) catch return nlp.NlpError.OutOfMemory;
+    var valid_count: usize = 0;
+
+    for (tokens) |token| {
+        var token_range = objc.NSRange{ .location = token.range_start, .length = token.range_length };
+        const tag = objc.msgSend(?objc.id, tagger_init, objc.sel("tagAtIndex:unit:scheme:tokenRange:"), .{
+            @as(objc.NSUInteger, token.range_start),
+            @as(objc.NSInteger, 0), // NLTokenUnit.word = 0
+            scheme,
+            &token_range,
+        });
+
+        const lemma = if (tag) |t| blk: {
+            const cstr = objc.fromNSString(t) orelse break :blk token.token;
+            const slice = std.mem.sliceTo(cstr, 0);
+            if (slice.len == 0) break :blk token.token;
+            break :blk slice;
+        } else token.token;
+
+        results[valid_count] = .{
+            .token = allocator.dupe(u8, token.token) catch return nlp.NlpError.OutOfMemory,
+            .lemma = allocator.dupe(u8, lemma) catch return nlp.NlpError.OutOfMemory,
+        };
+        valid_count += 1;
+    }
+
+    return allocator.realloc(results, valid_count) catch results[0..valid_count];
+}
+
+// ---------------------------------------------------------------------------
 // Data Detection (NSDataDetector)
 // ---------------------------------------------------------------------------
 

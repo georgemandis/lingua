@@ -38,6 +38,11 @@ pub const EntityTag = struct {
     range_length: usize,
 };
 
+pub const LemmaResult = struct {
+    token: []const u8,
+    lemma: []const u8,
+};
+
 pub const DetectedEntity = struct {
     entity_type: []const u8, // phone, email, address, date, url, link, transit
     value: []const u8,
@@ -86,6 +91,10 @@ pub fn detectEntities(allocator: std.mem.Allocator, text: []const u8) NlpError![
     return platform.detectEntities(allocator, text);
 }
 
+pub fn lemmatize(allocator: std.mem.Allocator, text: []const u8) NlpError![]LemmaResult {
+    return platform.lemmatize(allocator, text);
+}
+
 // ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
@@ -125,6 +134,14 @@ pub fn freeDetectedEntities(allocator: std.mem.Allocator, results: []DetectedEnt
     for (results) |r| {
         allocator.free(r.entity_type);
         allocator.free(r.value);
+    }
+    allocator.free(results);
+}
+
+pub fn freeLemmaResults(allocator: std.mem.Allocator, results: []LemmaResult) void {
+    for (results) |r| {
+        allocator.free(r.token);
+        allocator.free(r.lemma);
     }
     allocator.free(results);
 }
