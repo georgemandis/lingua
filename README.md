@@ -8,9 +8,20 @@ Written in Zig. Uses Apple's NaturalLanguage framework and NSDataDetector via Ob
 
 ## Install
 
+### Homebrew
+
 ```bash
+brew install georgemandis/tap/lingua
+```
+
+### From source
+
+Requires [Zig 0.16+](https://ziglang.org/download/) and macOS.
+
+```bash
+git clone https://github.com/georgemandis/lingua.git
+cd lingua
 zig build -Doptimize=ReleaseFast
-cp zig-out/bin/lingua /usr/local/bin/
 ```
 
 ## Usage
