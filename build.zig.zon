@@ -1,5 +1,6 @@
 .{
     .name = .lingua,
+    .fingerprint = 0xa44afa56909d31e3,
     .version = "0.0.1",
     .minimum_zig_version = "0.16.0",
     .paths = .{""},

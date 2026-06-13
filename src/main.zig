@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const nlp = @import("nlp");
 
-const version = "0.2.0";
+const version = "0.2.1";
 
 fn printUsage(writer: *std.Io.Writer) !void {
     try writer.print(
@@ -20,6 +20,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  pos        Part-of-speech tagging
         \\  tokenize   Tokenize text into words, sentences, or paragraphs
         \\  help       Show this help message
+        \\  completions  Generate shell completion scripts (bash, zsh, fish)
         \\
         \\Input:
         \\  Text can be provided as a trailing argument or piped via stdin.
@@ -404,6 +405,183 @@ fn cmdTokenize(
     }
 }
 
+fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
+    if (std.mem.eql(u8, shell, "bash")) {
+        try writer.print(
+            \\_lingua() {{
+            \\    local cur prev words cword
+            \\    _init_completion || return
+            \\
+            \\    local commands="detect sentiment entities ner lemma pos tokenize help completions"
+            \\
+            \\    if [[ $cword -eq 1 ]]; then
+            \\        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+            \\        return
+            \\    fi
+            \\
+            \\    case "${{words[1]}}" in
+            \\        detect)
+            \\            COMPREPLY=($(compgen -W "--top= --json" -- "$cur"))
+            \\            ;;
+            \\        sentiment)
+            \\            COMPREPLY=($(compgen -W "--per-sentence --json" -- "$cur"))
+            \\            ;;
+            \\        entities)
+            \\            COMPREPLY=($(compgen -W "--type= --json" -- "$cur"))
+            \\            ;;
+            \\        ner)
+            \\            COMPREPLY=($(compgen -W "--merge --json" -- "$cur"))
+            \\            ;;
+            \\        lemma|pos)
+            \\            COMPREPLY=($(compgen -W "--json" -- "$cur"))
+            \\            ;;
+            \\        tokenize)
+            \\            COMPREPLY=($(compgen -W "--unit= --json" -- "$cur"))
+            \\            ;;
+            \\        completions)
+            \\            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
+            \\            ;;
+            \\        *)
+            \\            ;;
+            \\    esac
+            \\}}
+            \\
+            \\complete -F _lingua lingua
+            \\
+        , .{});
+    } else if (std.mem.eql(u8, shell, "zsh")) {
+        try writer.print(
+            \\#compdef lingua
+            \\
+            \\_lingua() {{
+            \\    local -a commands
+            \\    commands=(
+            \\        'detect:Identify the language of input text'
+            \\        'sentiment:Analyze text sentiment'
+            \\        'entities:Extract structured data'
+            \\        'ner:Extract named entities'
+            \\        'lemma:Lemmatize words'
+            \\        'pos:Part-of-speech tagging'
+            \\        'tokenize:Tokenize text'
+            \\        'help:Show help message'
+            \\        'completions:Generate shell completion scripts'
+            \\    )
+            \\
+            \\    _arguments -C \
+            \\        '(-h --help)'{{-h,--help}}'[Show help]' \
+            \\        '(-v --version)'{{-v,--version}}'[Show version]' \
+            \\        '--json[Output as JSON]' \
+            \\        '1: :->command' \
+            \\        '*:: :->args'
+            \\
+            \\    case $state in
+            \\        command)
+            \\            _describe 'command' commands
+            \\            ;;
+            \\        args)
+            \\            case $words[1] in
+            \\                detect)
+            \\                    _arguments \
+            \\                        '--top=[Show top N candidates]:N' \
+            \\                        '--json[Output as JSON]'
+            \\                    ;;
+            \\                sentiment)
+            \\                    _arguments \
+            \\                        '--per-sentence[Score each sentence individually]' \
+            \\                        '--json[Output as JSON]'
+            \\                    ;;
+            \\                entities)
+            \\                    _arguments \
+            \\                        '--type=[Filter entity type]:type:(phone email address date url transit all)' \
+            \\                        '--json[Output as JSON]'
+            \\                    ;;
+            \\                ner)
+            \\                    _arguments \
+            \\                        '--merge[Merge adjacent tokens with the same entity tag]' \
+            \\                        '--json[Output as JSON]'
+            \\                    ;;
+            \\                lemma|pos)
+            \\                    _arguments '--json[Output as JSON]'
+            \\                    ;;
+            \\                tokenize)
+            \\                    _arguments \
+            \\                        '--unit=[Tokenize unit]:unit:(word sentence paragraph)' \
+            \\                        '--json[Output as JSON]'
+            \\                    ;;
+            \\                completions)
+            \\                    local -a shells
+            \\                    shells=('bash' 'zsh' 'fish')
+            \\                    _describe 'shell' shells
+            \\                    ;;
+            \\            esac
+            \\            ;;
+            \\    esac
+            \\}}
+            \\
+            \\_lingua "$@"
+            \\
+        , .{});
+    } else if (std.mem.eql(u8, shell, "fish")) {
+        try writer.print(
+            \\# Remove all existing completions for lingua
+            \\complete -e -c lingua
+            \\
+            \\# Disable file completions for lingua
+            \\complete -c lingua -f
+            \\
+            \\# Top-level commands
+            \\complete -c lingua -n '__fish_use_subcommand' -a detect     -d 'Identify the language of input text'
+            \\complete -c lingua -n '__fish_use_subcommand' -a sentiment  -d 'Analyze text sentiment'
+            \\complete -c lingua -n '__fish_use_subcommand' -a entities   -d 'Extract structured data'
+            \\complete -c lingua -n '__fish_use_subcommand' -a ner        -d 'Extract named entities'
+            \\complete -c lingua -n '__fish_use_subcommand' -a lemma      -d 'Lemmatize words'
+            \\complete -c lingua -n '__fish_use_subcommand' -a pos        -d 'Part-of-speech tagging'
+            \\complete -c lingua -n '__fish_use_subcommand' -a tokenize   -d 'Tokenize text'
+            \\complete -c lingua -n '__fish_use_subcommand' -a help       -d 'Show help message'
+            \\complete -c lingua -n '__fish_use_subcommand' -a completions -d 'Generate shell completion scripts'
+            \\
+            \\# Global flags
+            \\complete -c lingua -l json    -d 'Output as JSON'
+            \\complete -c lingua -l version -d 'Show version'
+            \\complete -c lingua -s v       -d 'Show version'
+            \\complete -c lingua -l help    -d 'Show help'
+            \\complete -c lingua -s h       -d 'Show help'
+            \\
+            \\# detect options
+            \\complete -c lingua -n '__fish_seen_subcommand_from detect' -l top  -d 'Show top N candidates' -r
+            \\complete -c lingua -n '__fish_seen_subcommand_from detect' -l json -d 'Output as JSON'
+            \\
+            \\# sentiment options
+            \\complete -c lingua -n '__fish_seen_subcommand_from sentiment' -l per-sentence -d 'Score each sentence individually'
+            \\complete -c lingua -n '__fish_seen_subcommand_from sentiment' -l json         -d 'Output as JSON'
+            \\
+            \\# entities options
+            \\complete -c lingua -n '__fish_seen_subcommand_from entities' -l type -d 'Filter entity type' -r -a 'phone email address date url transit all'
+            \\complete -c lingua -n '__fish_seen_subcommand_from entities' -l json -d 'Output as JSON'
+            \\
+            \\# ner options
+            \\complete -c lingua -n '__fish_seen_subcommand_from ner' -l merge -d 'Merge adjacent tokens with the same entity tag'
+            \\complete -c lingua -n '__fish_seen_subcommand_from ner' -l json  -d 'Output as JSON'
+            \\
+            \\# lemma options
+            \\complete -c lingua -n '__fish_seen_subcommand_from lemma' -l json -d 'Output as JSON'
+            \\
+            \\# pos options
+            \\complete -c lingua -n '__fish_seen_subcommand_from pos' -l json -d 'Output as JSON'
+            \\
+            \\# tokenize options
+            \\complete -c lingua -n '__fish_seen_subcommand_from tokenize' -l unit -d 'Tokenize unit' -r -a 'word sentence paragraph'
+            \\complete -c lingua -n '__fish_seen_subcommand_from tokenize' -l json -d 'Output as JSON'
+            \\
+            \\# completions shell argument
+            \\complete -c lingua -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish' -d 'Shell type'
+            \\
+        , .{});
+    } else {
+        try writer.print("Error: unknown shell '{s}'. Use bash, zsh, or fish.\n", .{shell});
+    }
+}
+
 fn printNlpError(writer: *std.Io.Writer, err: nlp.NlpError, json_mode: bool) !void {
     const msg: []const u8 = switch (err) {
         nlp.NlpError.FrameworkUnavailable => "NaturalLanguage framework not available",
@@ -452,6 +630,17 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.mem.eql(u8, command, "--version") or std.mem.eql(u8, command, "-v")) {
         try stdout.interface.print("lingua " ++ version ++ " (" ++ @tagName(builtin.os.tag) ++ ")\n", .{});
+        try stdout.interface.flush();
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "completions")) {
+        const shell = args_iter.next() orelse {
+            try stderr.interface.print("Error: completions requires a shell argument (bash, zsh, fish)\n", .{});
+            try stderr.interface.flush();
+            std.process.exit(2);
+        };
+        try cmdCompletions(&stdout.interface, shell);
         try stdout.interface.flush();
         return;
     }
