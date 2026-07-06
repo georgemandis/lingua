@@ -26,6 +26,7 @@ pub fn build(b: *std.Build) void {
         nlp_mod.linkSystemLibrary("objc", .{});
         nlp_mod.linkFramework("Foundation", .{});
         nlp_mod.linkFramework("NaturalLanguage", .{});
+        nlp_mod.linkFramework("AppKit", .{});
     }
 
     // CLI executable

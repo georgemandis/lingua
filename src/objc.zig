@@ -42,6 +42,8 @@ fn MsgSendFnType(comptime ReturnType: type, comptime ArgTypes: type) type {
         2 => *const fn (id, SEL, fields[0].type, fields[1].type) callconv(.c) ReturnType,
         3 => *const fn (id, SEL, fields[0].type, fields[1].type, fields[2].type) callconv(.c) ReturnType,
         4 => *const fn (id, SEL, fields[0].type, fields[1].type, fields[2].type, fields[3].type) callconv(.c) ReturnType,
+        5 => *const fn (id, SEL, fields[0].type, fields[1].type, fields[2].type, fields[3].type, fields[4].type) callconv(.c) ReturnType,
+        6 => *const fn (id, SEL, fields[0].type, fields[1].type, fields[2].type, fields[3].type, fields[4].type, fields[5].type) callconv(.c) ReturnType,
         else => @compileError("msgSendFn: too many arguments, add more cases"),
     };
 }
@@ -61,6 +63,8 @@ pub fn msgSend(comptime ReturnType: type, target: anytype, selector: SEL, args: 
         2 => func(target_as_id, selector, args[0], args[1]),
         3 => func(target_as_id, selector, args[0], args[1], args[2]),
         4 => func(target_as_id, selector, args[0], args[1], args[2], args[3]),
+        5 => func(target_as_id, selector, args[0], args[1], args[2], args[3], args[4]),
+        6 => func(target_as_id, selector, args[0], args[1], args[2], args[3], args[4], args[5]),
         else => @compileError("msgSend: too many arguments"),
     };
 }
@@ -118,6 +122,9 @@ pub const NSRange = extern struct {
     location: NSUInteger,
     length: NSUInteger,
 };
+
+/// NSNotFound = NSIntegerMax (not NSUIntegerMax).
+pub const NSNotFound: NSUInteger = @intCast(std.math.maxInt(NSInteger));
 
 // ---------------------------------------------------------------------------
 // Part 5: Autorelease pool
