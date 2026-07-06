@@ -50,6 +50,13 @@ pub const DetectedEntity = struct {
     range_length: usize,
 };
 
+pub const SpellingIssue = struct {
+    word: []const u8,
+    guesses: [][]const u8,
+    range_start: usize,
+    range_length: usize,
+};
+
 pub const TokenUnit = enum {
     word,
     sentence,
@@ -93,6 +100,10 @@ pub fn detectEntities(allocator: std.mem.Allocator, text: []const u8) NlpError![
 
 pub fn lemmatize(allocator: std.mem.Allocator, text: []const u8) NlpError![]LemmaResult {
     return platform.lemmatize(allocator, text);
+}
+
+pub fn checkSpelling(allocator: std.mem.Allocator, text: []const u8, lang: ?[]const u8) NlpError![]SpellingIssue {
+    return platform.checkSpelling(allocator, text, lang);
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +153,15 @@ pub fn freeLemmaResults(allocator: std.mem.Allocator, results: []LemmaResult) vo
     for (results) |r| {
         allocator.free(r.token);
         allocator.free(r.lemma);
+    }
+    allocator.free(results);
+}
+
+pub fn freeSpellingIssues(allocator: std.mem.Allocator, results: []SpellingIssue) void {
+    for (results) |r| {
+        allocator.free(r.word);
+        for (r.guesses) |g| allocator.free(g);
+        allocator.free(r.guesses);
     }
     allocator.free(results);
 }

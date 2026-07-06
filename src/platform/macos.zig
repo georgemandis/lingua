@@ -472,6 +472,109 @@ pub fn detectEntities(allocator: std.mem.Allocator, text: []const u8) nlp.NlpErr
 }
 
 // ---------------------------------------------------------------------------
+// Spelling & Grammar (NSSpellChecker / AppKit)
+// ---------------------------------------------------------------------------
+
+fn sharedSpellChecker() ?objc.id {
+    const NSSpellChecker = objc.getClass("NSSpellChecker") orelse return null;
+    return objc.msgSend(?objc.id, NSSpellChecker, objc.sel("sharedSpellChecker"), .{});
+}
+
+fn uniqueSpellDocumentTag() objc.NSInteger {
+    const NSSpellChecker = objc.getClass("NSSpellChecker") orelse return 0;
+    return objc.msgSend(objc.NSInteger, NSSpellChecker, objc.sel("uniqueSpellDocumentTag"), .{});
+}
+
+/// Resolve the language to check against: explicit --lang wins, otherwise
+/// auto-detect via NLLanguageRecognizer. Returns an owned slice (caller
+/// frees) or null if detection fails (callers then let NSSpellChecker use
+/// its own default).
+fn resolveLanguage(allocator: std.mem.Allocator, text: []const u8, lang: ?[]const u8) ?[]const u8 {
+    if (lang) |l| return allocator.dupe(u8, l) catch null;
+    const detected = detectLanguage(allocator, text, 1) catch return null;
+    defer nlp.freeLanguageResults(allocator, detected);
+    if (detected.len == 0) return null;
+    return allocator.dupe(u8, detected[0].language) catch null;
+}
+
+pub fn checkSpelling(allocator: std.mem.Allocator, text: []const u8, lang: ?[]const u8) nlp.NlpError![]nlp.SpellingIssue {
+    const pool = objc.autoreleasePoolPush();
+    defer objc.autoreleasePoolPop(pool);
+
+    const checker = sharedSpellChecker() orelse return nlp.NlpError.FrameworkUnavailable;
+    const tag = uniqueSpellDocumentTag();
+
+    const resolved_lang = resolveLanguage(allocator, text, lang);
+    defer if (resolved_lang) |l| allocator.free(l);
+
+    var ns_lang: ?objc.id = null;
+    if (resolved_lang) |l| {
+        ns_lang = createNSStringFromSlice(l);
+        if (ns_lang) |nl| {
+            const accepted = objc.msgSend(bool, checker, objc.sel("setLanguage:"), .{nl});
+            if (!accepted) {
+                // Unsupported dictionary: return no issues rather than
+                // flagging every word against the wrong language.
+                return allocator.alloc(nlp.SpellingIssue, 0) catch return nlp.NlpError.OutOfMemory;
+            }
+        }
+    }
+
+    const ns_text = createNSStringFromSlice(text) orelse return nlp.NlpError.DetectionFailed;
+    const text_length = objc.nsStringLength(ns_text);
+
+    var results: std.ArrayList(nlp.SpellingIssue) = .empty;
+    defer results.deinit(allocator);
+
+    var offset: objc.NSUInteger = 0;
+    while (offset < text_length) {
+        const range = objc.msgSend(objc.NSRange, checker, objc.sel("checkSpellingOfString:startingAt:"), .{
+            ns_text,
+            @as(objc.NSInteger, @intCast(offset)),
+        });
+        // checkSpellingOfString:startingAt: is a "find next" primitive built
+        // for interactive UI: once it runs past the end of the string it
+        // wraps around and returns a match near the start again instead of
+        // NSNotFound. Treat a returned location before our scan offset as
+        // wraparound and stop, or this loop never terminates.
+        if (range.location == objc.NSNotFound or range.length == 0 or range.location < offset) break;
+
+        const substring = objc.msgSend(objc.id, ns_text, objc.sel("substringWithRange:"), .{range});
+        const word_cstr = objc.fromNSString(substring) orelse break;
+        const word_slice = std.mem.sliceTo(word_cstr, 0);
+
+        var guess_list: std.ArrayList([]const u8) = .empty;
+        defer guess_list.deinit(allocator);
+        const guess_array = objc.msgSend(?objc.id, checker, objc.sel("guessesForWordRange:inString:language:inSpellDocumentWithTag:"), .{
+            range,
+            ns_text,
+            ns_lang,
+            tag,
+        });
+        if (guess_array) |ga| {
+            const gcount = objc.nsArrayCount(ga);
+            for (0..gcount) |gi| {
+                const g = objc.nsArrayObjectAtIndex(ga, gi);
+                const g_cstr = objc.fromNSString(g) orelse continue;
+                const g_dup = allocator.dupe(u8, std.mem.sliceTo(g_cstr, 0)) catch return nlp.NlpError.OutOfMemory;
+                guess_list.append(allocator, g_dup) catch return nlp.NlpError.OutOfMemory;
+            }
+        }
+
+        results.append(allocator, .{
+            .word = allocator.dupe(u8, word_slice) catch return nlp.NlpError.OutOfMemory,
+            .guesses = guess_list.toOwnedSlice(allocator) catch return nlp.NlpError.OutOfMemory,
+            .range_start = range.location,
+            .range_length = range.length,
+        }) catch return nlp.NlpError.OutOfMemory;
+
+        offset = range.location + range.length;
+    }
+
+    return results.toOwnedSlice(allocator) catch return nlp.NlpError.OutOfMemory;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

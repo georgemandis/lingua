@@ -19,6 +19,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  lemma      Lemmatize words (base/dictionary forms)
         \\  pos        Part-of-speech tagging
         \\  tokenize   Tokenize text into words, sentences, or paragraphs
+        \\  spell      Check spelling (exit 1 if issues found)
         \\  help       Show this help message
         \\  completions  Generate shell completion scripts (bash, zsh, fish)
         \\
@@ -47,6 +48,9 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\
         \\  entities:
         \\    --type=TYPE        Filter: phone,email,address,date,url,transit,all (default: all)
+        \\
+        \\  spell:
+        \\    --lang=XX          Force language (default: auto-detect)
         \\
         \\Created by George Mandis <george@mand.is>
         \\
@@ -405,6 +409,53 @@ fn cmdTokenize(
     }
 }
 
+fn cmdSpell(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+    lang: ?[]const u8,
+) !usize {
+    const results = nlp.checkSpelling(allocator, text, lang) catch |err| {
+        try printNlpError(writer, err, json_mode);
+        try writer.flush();
+        std.process.exit(2);
+    };
+    defer nlp.freeSpellingIssues(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(",", .{});
+            try writer.print("{{\"type\":\"spelling\",\"value\":\"", .{});
+            try writeJsonString(writer, r.word);
+            try writer.print("\",\"corrections\":[", .{});
+            for (r.guesses, 0..) |g, gi| {
+                if (gi > 0) try writer.print(",", .{});
+                try writer.print("\"", .{});
+                try writeJsonString(writer, g);
+                try writer.print("\"", .{});
+            }
+            try writer.print("],\"range\":[{d},{d}]}}", .{ r.range_start, r.range_length });
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results) |r| {
+            try writer.print("spell: {s}", .{r.word});
+            if (r.guesses.len > 0) {
+                try writer.print(" -> ", .{});
+                const max_shown = @min(r.guesses.len, 3);
+                for (r.guesses[0..max_shown], 0..) |g, gi| {
+                    if (gi > 0) try writer.print(", ", .{});
+                    try writer.print("{s}", .{g});
+                }
+            }
+            try writer.print(" [{d},{d}]\n", .{ r.range_start, r.range_length });
+        }
+    }
+    return results.len;
+}
+
 fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
     if (std.mem.eql(u8, shell, "bash")) {
         try writer.print(
@@ -652,6 +703,7 @@ pub fn main(init: std.process.Init) !void {
     var token_unit: nlp.TokenUnit = .word;
     var type_filter: ?[]const u8 = null;
     var merge_entities = false;
+    var lang: ?[]const u8 = null;
     var inline_text: ?[]const u8 = null;
 
     while (args_iter.next()) |arg| {
@@ -683,6 +735,8 @@ pub fn main(init: std.process.Init) !void {
             merge_entities = true;
         } else if (std.mem.startsWith(u8, arg, "--type=")) {
             type_filter = arg["--type=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--lang=")) {
+            lang = arg["--lang=".len..];
         } else if (std.mem.startsWith(u8, arg, "-")) {
             try stderr.interface.print("Error: unknown flag: {s}\n", .{arg});
             try stderr.interface.flush();
@@ -695,6 +749,8 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    const is_lint = std.mem.eql(u8, command, "grammar") or std.mem.eql(u8, command, "spell");
+
     // Get input text
     const text = if (inline_text) |t|
         allocator.dupe(u8, t) catch {
@@ -706,14 +762,14 @@ pub fn main(init: std.process.Init) !void {
         readStdin(allocator, init) catch {
             try stderr.interface.print("Error: no input text. Provide text as an argument or pipe via stdin.\n", .{});
             try stderr.interface.flush();
-            std.process.exit(1);
+            std.process.exit(if (is_lint) 2 else 1);
         };
     defer allocator.free(text);
 
     if (text.len == 0) {
         try stderr.interface.print("Error: empty input\n", .{});
         try stderr.interface.flush();
-        std.process.exit(1);
+        std.process.exit(if (is_lint) 2 else 1);
     }
 
     // Dispatch to command handler
@@ -731,6 +787,11 @@ pub fn main(init: std.process.Init) !void {
         try cmdPos(&stdout.interface, allocator, text, json_mode);
     } else if (std.mem.eql(u8, command, "tokenize")) {
         try cmdTokenize(&stdout.interface, allocator, text, json_mode, token_unit);
+    } else if (std.mem.eql(u8, command, "spell")) {
+        const issue_count = try cmdSpell(&stdout.interface, allocator, text, json_mode, lang);
+        try stdout.interface.flush();
+        if (issue_count > 0) std.process.exit(1);
+        return;
     } else {
         try stderr.interface.print("Error: unknown command '{s}'\n\n", .{command});
         try printUsage(&stderr.interface);
