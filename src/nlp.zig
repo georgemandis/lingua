@@ -57,6 +57,16 @@ pub const SpellingIssue = struct {
     range_length: usize,
 };
 
+pub const GrammarIssue = struct {
+    value: []const u8, // the offending text span
+    description: []const u8,
+    corrections: [][]const u8,
+    range_start: usize,
+    range_length: usize,
+    sentence_start: usize,
+    sentence_length: usize,
+};
+
 pub const TokenUnit = enum {
     word,
     sentence,
@@ -104,6 +114,10 @@ pub fn lemmatize(allocator: std.mem.Allocator, text: []const u8) NlpError![]Lemm
 
 pub fn checkSpelling(allocator: std.mem.Allocator, text: []const u8, lang: ?[]const u8) NlpError![]SpellingIssue {
     return platform.checkSpelling(allocator, text, lang);
+}
+
+pub fn checkGrammar(allocator: std.mem.Allocator, text: []const u8, lang: ?[]const u8) NlpError![]GrammarIssue {
+    return platform.checkGrammar(allocator, text, lang);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +176,16 @@ pub fn freeSpellingIssues(allocator: std.mem.Allocator, results: []SpellingIssue
         allocator.free(r.word);
         for (r.guesses) |g| allocator.free(g);
         allocator.free(r.guesses);
+    }
+    allocator.free(results);
+}
+
+pub fn freeGrammarIssues(allocator: std.mem.Allocator, results: []GrammarIssue) void {
+    for (results) |r| {
+        allocator.free(r.value);
+        allocator.free(r.description);
+        for (r.corrections) |c| allocator.free(c);
+        allocator.free(r.corrections);
     }
     allocator.free(results);
 }

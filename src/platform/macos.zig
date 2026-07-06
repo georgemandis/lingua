@@ -574,6 +574,99 @@ pub fn checkSpelling(allocator: std.mem.Allocator, text: []const u8, lang: ?[]co
     return results.toOwnedSlice(allocator) catch return nlp.NlpError.OutOfMemory;
 }
 
+pub fn checkGrammar(allocator: std.mem.Allocator, text: []const u8, lang: ?[]const u8) nlp.NlpError![]nlp.GrammarIssue {
+    const pool = objc.autoreleasePoolPush();
+    defer objc.autoreleasePoolPop(pool);
+
+    const checker = sharedSpellChecker() orelse return nlp.NlpError.FrameworkUnavailable;
+    const tag = uniqueSpellDocumentTag();
+
+    const resolved_lang = resolveLanguage(allocator, text, lang);
+    defer if (resolved_lang) |l| allocator.free(l);
+    const ns_lang: ?objc.id = if (resolved_lang) |l| createNSStringFromSlice(l) else null;
+
+    const ns_text = createNSStringFromSlice(text) orelse return nlp.NlpError.DetectionFailed;
+    const text_length = objc.nsStringLength(ns_text);
+
+    var results: std.ArrayList(nlp.GrammarIssue) = .empty;
+    defer results.deinit(allocator);
+
+    var offset: objc.NSUInteger = 0;
+    while (offset < text_length) {
+        var details: ?objc.id = null;
+        // Returns the range of the next sentence containing an error;
+        // an unsupported language simply never finds one (NSNotFound).
+        const sentence_range = objc.msgSend(objc.NSRange, checker, objc.sel("checkGrammarOfString:startingAt:language:wrap:inSpellDocumentWithTag:details:"), .{
+            ns_text,
+            @as(objc.NSInteger, @intCast(offset)),
+            ns_lang,
+            false,
+            tag,
+            &details,
+        });
+        // Even with wrap=false this API can behave like the spell-check
+        // "find next" primitive: guard against a returned location before
+        // our scan offset the same way checkSpelling does, or this loop
+        // never terminates.
+        if (sentence_range.location == objc.NSNotFound or sentence_range.length == 0 or sentence_range.location < offset) break;
+
+        if (details) |details_array| {
+            const dcount = objc.nsArrayCount(details_array);
+            for (0..dcount) |di| {
+                const detail = objc.nsArrayObjectAtIndex(details_array, di);
+
+                const desc_obj = objc.msgSend(?objc.id, detail, objc.sel("objectForKey:"), .{objc.nsString("NSGrammarUserDescription")});
+                const description = if (desc_obj) |d| blk: {
+                    const cstr = objc.fromNSString(d) orelse break :blk "";
+                    break :blk std.mem.sliceTo(cstr, 0);
+                } else "";
+
+                // NSGrammarRange is relative to the sentence, not the document.
+                const range_obj = objc.msgSend(?objc.id, detail, objc.sel("objectForKey:"), .{objc.nsString("NSGrammarRange")});
+                const rel_range = if (range_obj) |rv|
+                    objc.msgSend(objc.NSRange, rv, objc.sel("rangeValue"), .{})
+                else
+                    objc.NSRange{ .location = 0, .length = sentence_range.length };
+
+                const abs_range = objc.NSRange{
+                    .location = sentence_range.location + rel_range.location,
+                    .length = rel_range.length,
+                };
+                const substring = objc.msgSend(objc.id, ns_text, objc.sel("substringWithRange:"), .{abs_range});
+                const value_cstr = objc.fromNSString(substring) orelse continue;
+                const value_slice = std.mem.sliceTo(value_cstr, 0);
+
+                var correction_list: std.ArrayList([]const u8) = .empty;
+                defer correction_list.deinit(allocator);
+                const corr_obj = objc.msgSend(?objc.id, detail, objc.sel("objectForKey:"), .{objc.nsString("NSGrammarCorrections")});
+                if (corr_obj) |ca| {
+                    const ccount = objc.nsArrayCount(ca);
+                    for (0..ccount) |ci| {
+                        const c = objc.nsArrayObjectAtIndex(ca, ci);
+                        const c_cstr = objc.fromNSString(c) orelse continue;
+                        const c_dup = allocator.dupe(u8, std.mem.sliceTo(c_cstr, 0)) catch return nlp.NlpError.OutOfMemory;
+                        correction_list.append(allocator, c_dup) catch return nlp.NlpError.OutOfMemory;
+                    }
+                }
+
+                results.append(allocator, .{
+                    .value = allocator.dupe(u8, value_slice) catch return nlp.NlpError.OutOfMemory,
+                    .description = allocator.dupe(u8, description) catch return nlp.NlpError.OutOfMemory,
+                    .corrections = correction_list.toOwnedSlice(allocator) catch return nlp.NlpError.OutOfMemory,
+                    .range_start = abs_range.location,
+                    .range_length = abs_range.length,
+                    .sentence_start = sentence_range.location,
+                    .sentence_length = sentence_range.length,
+                }) catch return nlp.NlpError.OutOfMemory;
+            }
+        }
+
+        offset = sentence_range.location + sentence_range.length;
+    }
+
+    return results.toOwnedSlice(allocator) catch return nlp.NlpError.OutOfMemory;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

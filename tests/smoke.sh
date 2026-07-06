@@ -48,6 +48,26 @@ expect "spell --lang override" 1 "recieve" "$out" $code
 out=$(printf "" | "$LINGUA" spell 2>&1); code=$?
 expect "spell empty input exits 2" 2 "empty input" "$out" $code
 
+# --- grammar ---
+
+out=$(echo "He go to the store yesterday." | "$LINGUA" grammar); code=$?
+expect "grammar finds agreement issue" 1 "go" "$out" $code
+
+out=$(echo "Their are many problem with with this sentence." | "$LINGUA" grammar); code=$?
+expect "grammar finds doubled word" 1 "doubled" "$out" $code
+
+out=$(echo "Their are many problem with with this sentence." | "$LINGUA" grammar); code=$?
+expect "grammar doubled word has correction" 1 " -> with" "$out" $code
+
+out=$(echo "The cat sat on the mat." | "$LINGUA" grammar); code=$?
+expect "grammar clean input exits 0" 0 "" "$out" $code
+
+out=$(echo "He go to the store yesterday." | "$LINGUA" grammar --json); code=$?
+expect "grammar json shape" 1 '"type":"grammar"' "$out" $code
+
+out=$(printf "" | "$LINGUA" grammar 2>&1); code=$?
+expect "grammar empty input exits 2" 2 "empty input" "$out" $code
+
 # --- summary ---
 
 if [ "$fails" -eq 0 ]; then

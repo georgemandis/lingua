@@ -19,6 +19,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  lemma      Lemmatize words (base/dictionary forms)
         \\  pos        Part-of-speech tagging
         \\  tokenize   Tokenize text into words, sentences, or paragraphs
+        \\  grammar    Check grammar (exit 1 if issues found)
         \\  spell      Check spelling (exit 1 if issues found)
         \\  help       Show this help message
         \\  completions  Generate shell completion scripts (bash, zsh, fish)
@@ -49,7 +50,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  entities:
         \\    --type=TYPE        Filter: phone,email,address,date,url,transit,all (default: all)
         \\
-        \\  spell:
+        \\  grammar, spell:
         \\    --lang=XX          Force language (default: auto-detect)
         \\
         \\Created by George Mandis <george@mand.is>
@@ -407,6 +408,54 @@ fn cmdTokenize(
             try writer.print("{s}\n", .{r.token});
         }
     }
+}
+
+fn cmdGrammar(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+    lang: ?[]const u8,
+) !usize {
+    const results = nlp.checkGrammar(allocator, text, lang) catch |err| {
+        try printNlpError(writer, err, json_mode);
+        try writer.flush();
+        std.process.exit(2);
+    };
+    defer nlp.freeGrammarIssues(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(",", .{});
+            try writer.print("{{\"type\":\"grammar\",\"value\":\"", .{});
+            try writeJsonString(writer, r.value);
+            try writer.print("\",\"description\":\"", .{});
+            try writeJsonString(writer, r.description);
+            try writer.print("\",\"corrections\":[", .{});
+            for (r.corrections, 0..) |c, ci| {
+                if (ci > 0) try writer.print(",", .{});
+                try writer.print("\"", .{});
+                try writeJsonString(writer, c);
+                try writer.print("\"", .{});
+            }
+            try writer.print("],\"range\":[{d},{d}]}}", .{ r.range_start, r.range_length });
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results) |r| {
+            try writer.print("grammar: {s}", .{r.description});
+            if (r.corrections.len > 0) {
+                try writer.print(" -> ", .{});
+                for (r.corrections, 0..) |ci_i, ci| {
+                    if (ci > 0) try writer.print(", ", .{});
+                    try writer.print("{s}", .{ci_i});
+                }
+            }
+            try writer.print(" [{d},{d}]\n", .{ r.range_start, r.range_length });
+        }
+    }
+    return results.len;
 }
 
 fn cmdSpell(
@@ -787,6 +836,11 @@ pub fn main(init: std.process.Init) !void {
         try cmdPos(&stdout.interface, allocator, text, json_mode);
     } else if (std.mem.eql(u8, command, "tokenize")) {
         try cmdTokenize(&stdout.interface, allocator, text, json_mode, token_unit);
+    } else if (std.mem.eql(u8, command, "grammar")) {
+        const issue_count = try cmdGrammar(&stdout.interface, allocator, text, json_mode, lang);
+        try stdout.interface.flush();
+        if (issue_count > 0) std.process.exit(1);
+        return;
     } else if (std.mem.eql(u8, command, "spell")) {
         const issue_count = try cmdSpell(&stdout.interface, allocator, text, json_mode, lang);
         try stdout.interface.flush();
