@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const nlp = @import("nlp");
 
-const version = "0.2.1";
+const version = "0.3.0";
 
 fn printUsage(writer: *std.Io.Writer) !void {
     try writer.print(
@@ -512,7 +512,7 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\    local cur prev words cword
             \\    _init_completion || return
             \\
-            \\    local commands="detect sentiment entities ner lemma pos tokenize help completions"
+            \\    local commands="detect sentiment entities ner lemma pos tokenize grammar spell help completions"
             \\
             \\    if [[ $cword -eq 1 ]]; then
             \\        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -537,6 +537,9 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\            ;;
             \\        tokenize)
             \\            COMPREPLY=($(compgen -W "--unit= --json" -- "$cur"))
+            \\            ;;
+            \\        grammar|spell)
+            \\            COMPREPLY=($(compgen -W "--lang= --json" -- "$cur"))
             \\            ;;
             \\        completions)
             \\            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
@@ -563,6 +566,8 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\        'lemma:Lemmatize words'
             \\        'pos:Part-of-speech tagging'
             \\        'tokenize:Tokenize text'
+            \\        'grammar:Check grammar'
+            \\        'spell:Check spelling'
             \\        'help:Show help message'
             \\        'completions:Generate shell completion scripts'
             \\    )
@@ -608,6 +613,11 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\                        '--unit=[Tokenize unit]:unit:(word sentence paragraph)' \
             \\                        '--json[Output as JSON]'
             \\                    ;;
+            \\                grammar|spell)
+            \\                    _arguments \
+            \\                        '--lang=[Force language]:lang' \
+            \\                        '--json[Output as JSON]'
+            \\                    ;;
             \\                completions)
             \\                    local -a shells
             \\                    shells=('bash' 'zsh' 'fish')
@@ -637,6 +647,8 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\complete -c lingua -n '__fish_use_subcommand' -a lemma      -d 'Lemmatize words'
             \\complete -c lingua -n '__fish_use_subcommand' -a pos        -d 'Part-of-speech tagging'
             \\complete -c lingua -n '__fish_use_subcommand' -a tokenize   -d 'Tokenize text'
+            \\complete -c lingua -n '__fish_use_subcommand' -a grammar    -d 'Check grammar'
+            \\complete -c lingua -n '__fish_use_subcommand' -a spell      -d 'Check spelling'
             \\complete -c lingua -n '__fish_use_subcommand' -a help       -d 'Show help message'
             \\complete -c lingua -n '__fish_use_subcommand' -a completions -d 'Generate shell completion scripts'
             \\
@@ -672,6 +684,14 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\# tokenize options
             \\complete -c lingua -n '__fish_seen_subcommand_from tokenize' -l unit -d 'Tokenize unit' -r -a 'word sentence paragraph'
             \\complete -c lingua -n '__fish_seen_subcommand_from tokenize' -l json -d 'Output as JSON'
+            \\
+            \\# grammar options
+            \\complete -c lingua -n '__fish_seen_subcommand_from grammar' -l lang -d 'Force language' -r
+            \\complete -c lingua -n '__fish_seen_subcommand_from grammar' -l json -d 'Output as JSON'
+            \\
+            \\# spell options
+            \\complete -c lingua -n '__fish_seen_subcommand_from spell' -l lang -d 'Force language' -r
+            \\complete -c lingua -n '__fish_seen_subcommand_from spell' -l json -d 'Output as JSON'
             \\
             \\# completions shell argument
             \\complete -c lingua -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish' -d 'Shell type'

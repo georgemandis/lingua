@@ -2,7 +2,7 @@
 
 Natural language processing from the command line, powered by native macOS APIs.
 
-Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), and tokenization — all on-device, no API keys, no downloads, no network calls.
+Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling and grammar checking, and tokenization — all on-device, no API keys, no downloads, no network calls.
 
 Written in Zig. Uses Apple's NaturalLanguage framework and NSDataDetector via Objective-C runtime bindings.
 
@@ -109,6 +109,31 @@ Hello world.
 How are you?
 ```
 
+### Spell Checking
+
+Check spelling using the same engine behind TextEdit's squiggles. Exits 1 if issues are found, 0 if clean — pipe-friendly for scripts and CI.
+
+```bash
+$ echo "The recieved package was definately late" | lingua spell
+spell: recieved -> received, relieved [4,8]
+spell: definately -> definitely, defiantly [25,10]
+
+$ echo "I recieve packages" | lingua spell --json
+[{"type":"spelling","value":"recieve","corrections":["receive","relieve"],"range":[2,7]}]
+```
+
+### Grammar Checking
+
+Informal grammar checking via NSSpellChecker — catches subject-verb agreement, doubled words, capitalization, and similar issues. English only (an Apple limitation). Exits 1 if issues are found.
+
+```bash
+$ echo "He go to the store yesterday." | lingua grammar
+grammar: The word ‘go’ may not agree with the rest of the sentence. [3,2]
+
+$ echo "It happened again again." | lingua grammar --json
+[{"type":"grammar","value":"again again","description":"The word ‘again’ may be inadvertently doubled.  Consider deleting the second instance.","corrections":["again"],"range":[12,11]}]
+```
+
 ## Composability
 
 lingua reads from stdin and writes to stdout, so it pipes naturally with other tools:
@@ -137,6 +162,8 @@ echo "Call 555-1234 on Tuesday" | lingua entities --json | jq '.[] | select(.typ
 | `ner` | Named entity recognition (people, places, organizations) |
 | `pos` | Part-of-speech tagging |
 | `tokenize` | Tokenize into words, sentences, or paragraphs |
+| `spell` | Check spelling (exit 1 if issues found) |
+| `grammar` | Check grammar — agreement, doubled words (exit 1 if issues found) |
 
 ## Options
 
@@ -157,6 +184,18 @@ entities:
 
 tokenize:
   --unit=UNIT         word, sentence, paragraph (default: word)
+
+grammar, spell:
+  --lang=XX           Force language (default: auto-detect)
+```
+
+## Exit Codes
+
+`grammar` and `spell` behave like linters: exit 0 when clean, 1 when issues are found, 2 on usage or runtime errors. All other commands exit 0 on success.
+
+```bash
+# Block a commit if the README has typos
+cat README.md | lingua spell && git commit -m "Update docs"
 ```
 
 ## Requirements
@@ -172,6 +211,7 @@ lingua bridges to macOS native frameworks via Objective-C runtime bindings (`obj
 - **Sentiment, POS, NER:** [NLTagger](https://developer.apple.com/documentation/naturallanguage/nltagger)
 - **Tokenization:** [NLTokenizer](https://developer.apple.com/documentation/naturallanguage/nltokenizer)
 - **Entity extraction:** [NSDataDetector](https://developer.apple.com/documentation/foundation/nsdatadetector)
+- **Spelling, grammar:** [NSSpellChecker](https://developer.apple.com/documentation/appkit/nsspellchecker)
 
 ## Related Projects
 
