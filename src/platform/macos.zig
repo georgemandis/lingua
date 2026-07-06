@@ -513,6 +513,9 @@ pub fn checkSpelling(allocator: std.mem.Allocator, text: []const u8, lang: ?[]co
         if (ns_lang) |nl| {
             const accepted = objc.msgSend(bool, checker, objc.sel("setLanguage:"), .{nl});
             if (!accepted) {
+                if (lang != null) {
+                    std.debug.print("Warning: language '{s}' is not supported by the spell checker\n", .{l});
+                }
                 // Unsupported dictionary: return no issues rather than
                 // flagging every word against the wrong language.
                 return allocator.alloc(nlp.SpellingIssue, 0) catch return nlp.NlpError.OutOfMemory;
@@ -584,6 +587,17 @@ pub fn checkGrammar(allocator: std.mem.Allocator, text: []const u8, lang: ?[]con
     const resolved_lang = resolveLanguage(allocator, text, lang);
     defer if (resolved_lang) |l| allocator.free(l);
     const ns_lang: ?objc.id = if (resolved_lang) |l| createNSStringFromSlice(l) else null;
+
+    // Validate an explicitly requested language so `--lang=zz` warns instead
+    // of silently reporting clean text. Auto-detected languages stay silent.
+    if (lang != null) {
+        if (ns_lang) |nl| {
+            const accepted = objc.msgSend(bool, checker, objc.sel("setLanguage:"), .{nl});
+            if (!accepted) {
+                std.debug.print("Warning: language '{s}' is not supported by the spell checker\n", .{resolved_lang.?});
+            }
+        }
+    }
 
     const ns_text = createNSStringFromSlice(text) orelse return nlp.NlpError.DetectionFailed;
     const text_length = objc.nsStringLength(ns_text);

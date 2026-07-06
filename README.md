@@ -4,7 +4,7 @@ Natural language processing from the command line, powered by native macOS APIs.
 
 Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling and grammar checking, and tokenization — all on-device, no API keys, no downloads, no network calls.
 
-Written in Zig. Uses Apple's NaturalLanguage framework and NSDataDetector via Objective-C runtime bindings.
+Written in Zig. Uses Apple's NaturalLanguage framework, NSSpellChecker, and NSDataDetector via Objective-C runtime bindings.
 
 ## Install
 
