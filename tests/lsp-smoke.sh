@@ -96,6 +96,22 @@ check "codeAction is a quickfix" '"kind":"quickfix"' "$OUT"
 check "codeAction edit replaces with correction" '"newText":"receive"' "$OUT"
 check "codeAction outside any diagnostic returns empty" '"id":6,"result":[]' "$OUT"
 
+OUT=$({
+  frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+  frame '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/s.md","languageId":"markdown","version":1,"text":"I recieve emails."}}}'
+  frame '{"jsonrpc":"2.0","id":8,"method":"textDocument/codeAction","params":{"textDocument":{"uri":"file:///tmp/s.md"},"range":{"start":{"line":4294967296,"character":0},"end":{"line":0,"character":1}},"context":{"diagnostics":[]}}}'
+  frame '{"jsonrpc":"2.0","id":9,"method":"shutdown"}'
+  frame '{"jsonrpc":"2.0","method":"exit"}'
+} | "$LINGUA" lsp 2>/dev/null)
+code=$?
+check "out-of-range position gets InvalidParams" '"id":8,"error":{"code":-32602' "$OUT"
+if [ "$code" -eq 0 ]; then
+  echo "PASS: server survives out-of-range position"
+else
+  echo "FAIL: exit code $code after out-of-range position"
+  fails=$((fails + 1))
+fi
+
 if [ "$fails" -eq 0 ]; then
   echo "All lsp smoke tests passed"
 else

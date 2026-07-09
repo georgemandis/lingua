@@ -527,8 +527,9 @@ fn parsePosition(v: ?std.json.Value) ?Position {
     const line = getMember(pos, "line") orelse return null;
     const character = getMember(pos, "character") orelse return null;
     if (line != .integer or character != .integer) return null;
-    if (line.integer < 0 or character.integer < 0) return null;
-    return .{ .line = @intCast(line.integer), .character = @intCast(character.integer) };
+    const line_u32 = std.math.cast(u32, line.integer) orelse return null;
+    const character_u32 = std.math.cast(u32, character.integer) orelse return null;
+    return .{ .line = line_u32, .character = character_u32 };
 }
 
 pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []Diagnostic) void {
