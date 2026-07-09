@@ -138,7 +138,7 @@ $ echo "It happened again again." | lingua grammar --json
 
 `lingua lsp` runs a Language Server Protocol server over stdio, turning any
 LSP-capable editor into an English grammar and spelling checker: squiggles
-for issues, quick fixes from the system spell checker’s suggestions. Powered
+for issues, quick fixes from the system spell checker's suggestions. Powered
 by the same `grammar`/`spell` machinery.
 
 ```bash
@@ -153,10 +153,10 @@ development host.
 **Neovim** needs no plugin:
 
 ```lua
-vim.api.nvim_create_autocmd(‘FileType’, {
-  pattern = { ‘markdown’, ‘text’, ‘gitcommit’ },
+vim.api.nvim_create_autocmd('FileType', {
+  pattern = { 'markdown', 'text', 'gitcommit' },
   callback = function()
-    vim.lsp.start({ name = ‘lingua’, cmd = { ‘lingua’, ‘lsp’ } })
+    vim.lsp.start({ name = 'lingua', cmd = { 'lingua', 'lsp' } })
   end,
 })
 ```
