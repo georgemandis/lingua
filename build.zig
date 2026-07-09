@@ -52,4 +52,19 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the lingua CLI");
     run_step.dependOn(&run_cmd.step);
+
+    // Unit tests (src/lsp.zig)
+    const lsp_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lsp.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nlp", .module = nlp_mod },
+            },
+        }),
+    });
+    const run_lsp_tests = b.addRunArtifact(lsp_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_lsp_tests.step);
 }
