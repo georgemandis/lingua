@@ -107,3 +107,87 @@ test "LineIndex: offset at exact line start and past EOF clamps" {
     try std.testing.expectEqual(Position{ .line = 1, .character = 0 }, idx.position(4));
     try std.testing.expectEqual(Position{ .line = 1, .character = 1 }, idx.position(999));
 }
+
+// ---------------------------------------------------------------------------
+// Content-Length framing (LSP base protocol)
+// ---------------------------------------------------------------------------
+
+/// Parse a header line (trailing \r allowed). Returns the length for a
+/// Content-Length header, null for any other header or a malformed value.
+pub fn parseContentLength(line: []const u8) ?usize {
+    const trimmed = std.mem.trimEnd(u8, line, "\r");
+    const prefix = "Content-Length:";
+    if (!std.ascii.startsWithIgnoreCase(trimmed, prefix)) return null;
+    const value = std.mem.trim(u8, trimmed[prefix.len..], " \t");
+    return std.fmt.parseInt(usize, value, 10) catch null;
+}
+
+/// Read one framed message. Returns the owned body, or null on clean EOF
+/// at a message boundary. Unknown headers and stray blank lines before the
+/// headers are skipped.
+pub fn readMessage(allocator: std.mem.Allocator, reader: *std.Io.Reader) !?[]u8 {
+    var content_length: ?usize = null;
+    while (true) {
+        const line = reader.takeDelimiterExclusive('\n') catch |err| switch (err) {
+            error.EndOfStream => return null,
+            else => return err,
+        };
+        // takeDelimiterExclusive leaves the reader positioned before the '\n',
+        // so we must consume it with discardDelimiterInclusive.
+        _ = reader.discardDelimiterInclusive('\n') catch |err| switch (err) {
+            error.EndOfStream => {},
+            else => return err,
+        };
+        const trimmed = std.mem.trimEnd(u8, line, "\r");
+        if (trimmed.len == 0) {
+            if (content_length != null) break;
+            continue; // stray blank line before any headers
+        }
+        if (parseContentLength(trimmed)) |len| content_length = len;
+    }
+    const body = try allocator.alloc(u8, content_length.?);
+    errdefer allocator.free(body);
+    try reader.readSliceAll(body);
+    return body;
+}
+
+test "parseContentLength: valid, case-insensitive, and invalid" {
+    try std.testing.expectEqual(@as(?usize, 42), parseContentLength("Content-Length: 42"));
+    try std.testing.expectEqual(@as(?usize, 7), parseContentLength("content-length:7\r"));
+    try std.testing.expectEqual(@as(?usize, null), parseContentLength("Content-Type: application/json"));
+    try std.testing.expectEqual(@as(?usize, null), parseContentLength("Content-Length: banana"));
+}
+
+test "readMessage: single framed message" {
+    const allocator = std.testing.allocator;
+    var r = std.Io.Reader.fixed("Content-Length: 7\r\n\r\n{\"a\":1}");
+    const body = (try readMessage(allocator, &r)).?;
+    defer allocator.free(body);
+    try std.testing.expectEqualStrings("{\"a\":1}", body);
+}
+
+test "readMessage: two messages back-to-back, then EOF" {
+    const allocator = std.testing.allocator;
+    var r = std.Io.Reader.fixed("Content-Length: 2\r\n\r\nhiContent-Length: 3\r\n\r\nbye");
+    const first = (try readMessage(allocator, &r)).?;
+    defer allocator.free(first);
+    try std.testing.expectEqualStrings("hi", first);
+    const second = (try readMessage(allocator, &r)).?;
+    defer allocator.free(second);
+    try std.testing.expectEqualStrings("bye", second);
+    try std.testing.expectEqual(@as(?[]u8, null), try readMessage(allocator, &r));
+}
+
+test "readMessage: extra headers and stray blank lines are tolerated" {
+    const allocator = std.testing.allocator;
+    var r = std.Io.Reader.fixed("\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\nok");
+    const body = (try readMessage(allocator, &r)).?;
+    defer allocator.free(body);
+    try std.testing.expectEqualStrings("ok", body);
+}
+
+test "readMessage: EOF with no message returns null" {
+    const allocator = std.testing.allocator;
+    var r = std.Io.Reader.fixed("");
+    try std.testing.expectEqual(@as(?[]u8, null), try readMessage(allocator, &r));
+}
