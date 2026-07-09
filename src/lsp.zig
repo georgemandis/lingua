@@ -478,10 +478,58 @@ const Server = struct {
     }
 
     fn handleCodeAction(self: *Server, id: std.json.Value, params: std.json.Value) !void {
-        _ = params;
-        try self.respondResult(id, "[]");
+        // Malformed params on a request -> InvalidParams, per spec.
+        const td = getMember(params, "textDocument") orelse return self.respondError(id, -32602, "invalid params");
+        const uri_val = getMember(td, "uri") orelse return self.respondError(id, -32602, "invalid params");
+        const range = getMember(params, "range") orelse return self.respondError(id, -32602, "invalid params");
+        if (uri_val != .string) return self.respondError(id, -32602, "invalid params");
+        const req_start = parsePosition(getMember(range, "start")) orelse return self.respondError(id, -32602, "invalid params");
+        const req_end = parsePosition(getMember(range, "end")) orelse return self.respondError(id, -32602, "invalid params");
+
+        const diags = self.stored_diags.get(uri_val.string) orelse return self.respondResult(id, "[]");
+
+        var body: std.Io.Writer.Allocating = .init(self.allocator);
+        defer body.deinit();
+        const w = &body.writer;
+        try w.print("[", .{});
+        var first = true;
+        for (diags) |d| {
+            // Overlap: diagnostic start <= request end AND request start <= diagnostic end.
+            if (!posLessEq(d.start, req_end) or !posLessEq(req_start, d.end)) continue;
+            for (d.corrections) |correction| {
+                if (!first) try w.print(",", .{});
+                first = false;
+                try w.print("{{\"title\":\"Change to '", .{});
+                try writeJsonString(w, correction);
+                try w.print("'\",\"kind\":\"quickfix\",\"diagnostics\":[", .{});
+                try writeDiagnosticJson(w, d);
+                try w.print("],\"edit\":{{\"changes\":{{\"", .{});
+                try writeJsonString(w, uri_val.string);
+                try w.print("\":[{{\"range\":{{\"start\":{{\"line\":{d},\"character\":{d}}},\"end\":{{\"line\":{d},\"character\":{d}}}}},\"newText\":\"", .{
+                    d.start.line, d.start.character, d.end.line, d.end.character,
+                });
+                try writeJsonString(w, correction);
+                try w.print("\"}}]}}}}}}", .{});
+            }
+        }
+        try w.print("]", .{});
+        try self.respondResult(id, body.written());
     }
 };
+
+fn posLessEq(a: Position, b: Position) bool {
+    if (a.line != b.line) return a.line < b.line;
+    return a.character <= b.character;
+}
+
+fn parsePosition(v: ?std.json.Value) ?Position {
+    const pos = v orelse return null;
+    const line = getMember(pos, "line") orelse return null;
+    const character = getMember(pos, "character") orelse return null;
+    if (line != .integer or character != .integer) return null;
+    if (line.integer < 0 or character.integer < 0) return null;
+    return .{ .line = @intCast(line.integer), .character = @intCast(character.integer) };
+}
 
 pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []Diagnostic) void {
     for (diags) |d| {

@@ -82,6 +82,20 @@ check "spelling diagnostic is severity 1" '"severity":1' "$OUT"
 check "spelling message names the word" "Possibly misspelled: 'recieve'" "$OUT"
 check "spelling corrections in data" '"corrections":["receive"' "$OUT"
 
+OUT=$({
+  frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+  frame '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/s.md","languageId":"markdown","version":1,"text":"I recieve emails."}}}'
+  frame '{"jsonrpc":"2.0","id":5,"method":"textDocument/codeAction","params":{"textDocument":{"uri":"file:///tmp/s.md"},"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":4}},"context":{"diagnostics":[]}}}'
+  frame '{"jsonrpc":"2.0","id":6,"method":"textDocument/codeAction","params":{"textDocument":{"uri":"file:///tmp/s.md"},"range":{"start":{"line":0,"character":12},"end":{"line":0,"character":14}},"context":{"diagnostics":[]}}}'
+  frame '{"jsonrpc":"2.0","id":9,"method":"shutdown"}'
+  frame '{"jsonrpc":"2.0","method":"exit"}'
+} | "$LINGUA" lsp 2>/dev/null)
+
+check "codeAction offers the correction" "Change to 'receive'" "$OUT"
+check "codeAction is a quickfix" '"kind":"quickfix"' "$OUT"
+check "codeAction edit replaces with correction" '"newText":"receive"' "$OUT"
+check "codeAction outside any diagnostic returns empty" '"id":6,"result":[]' "$OUT"
+
 if [ "$fails" -eq 0 ]; then
   echo "All lsp smoke tests passed"
 else
