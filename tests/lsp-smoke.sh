@@ -41,6 +41,21 @@ fi
 OUT=$(frame '{"jsonrpc":"2.0","id":1,"method":"shutdown"}' | "$LINGUA" lsp 2>/dev/null)
 check "request before initialize rejected" '"code":-32002' "$OUT"
 
+OUT=$({
+  frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+  frame '{"jsonrpc":"2.0","method":"textDocument/codeAction","params":{}}'
+  frame '{"jsonrpc":"2.0","id":7,"method":"shutdown"}'
+  frame '{"jsonrpc":"2.0","method":"exit"}'
+} | "$LINGUA" lsp 2>/dev/null)
+code=$?
+check "codeAction without id is ignored, server keeps serving" '"id":7,"result":null' "$OUT"
+if [ "$code" -eq 0 ]; then
+  echo "PASS: clean exit after id-less codeAction"
+else
+  echo "FAIL: exit code $code after id-less codeAction"
+  fails=$((fails + 1))
+fi
+
 if [ "$fails" -eq 0 ]; then
   echo "All lsp smoke tests passed"
 else

@@ -335,7 +335,7 @@ const Server = struct {
         } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
             try self.handleDidClose(params);
         } else if (std.mem.eql(u8, method, "textDocument/codeAction")) {
-            try self.handleCodeAction(id.?, params);
+            if (id) |i| try self.handleCodeAction(i, params);
         } else if (id) |i| {
             try self.respondError(i, -32601, "method not found");
         }
