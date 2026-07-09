@@ -1,0 +1,40 @@
+{
+  "name": "lingua-vscode",
+  "displayName": "lingua",
+  "description": "English grammar and spelling diagnostics via lingua (macOS only)",
+  "version": "0.0.1",
+  "publisher": "georgemandis",
+  "private": true,
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters"],
+  "activationEvents": [
+    "onLanguage:markdown",
+    "onLanguage:plaintext",
+    "onLanguage:git-commit"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "lingua",
+      "properties": {
+        "lingua.path": {
+          "type": "string",
+          "default": "lingua",
+          "description": "Path to the lingua binary."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
