@@ -191,3 +191,216 @@ test "readMessage: EOF with no message returns null" {
     var r = std.Io.Reader.fixed("");
     try std.testing.expectEqual(@as(?[]u8, null), try readMessage(allocator, &r));
 }
+
+// ---------------------------------------------------------------------------
+// JSON output helpers
+// ---------------------------------------------------------------------------
+
+pub fn writeJsonString(writer: *std.Io.Writer, s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try writer.print("\\\"", .{}),
+            '\\' => try writer.print("\\\\", .{}),
+            '\n' => try writer.print("\\n", .{}),
+            '\r' => try writer.print("\\r", .{}),
+            '\t' => try writer.print("\\t", .{}),
+            0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F => try writer.print("\\u{X:0>4}", .{c}),
+            else => try writer.print("{c}", .{c}),
+        }
+    }
+}
+
+fn writeIdValue(writer: *std.Io.Writer, id: std.json.Value) !void {
+    switch (id) {
+        .integer => |n| try writer.print("{d}", .{n}),
+        .string => |s| {
+            try writer.print("\"", .{});
+            try writeJsonString(writer, s);
+            try writer.print("\"", .{});
+        },
+        else => try writer.print("null", .{}),
+    }
+}
+
+/// Fetch a member of a JSON object value; null if not an object or missing.
+fn getMember(v: std.json.Value, key: []const u8) ?std.json.Value {
+    if (v != .object) return null;
+    return v.object.get(key);
+}
+
+// ---------------------------------------------------------------------------
+// Server
+// ---------------------------------------------------------------------------
+
+pub const Diagnostic = struct {
+    start: Position,
+    end: Position,
+    severity: u8, // 1 = Error (spelling), 2 = Warning (grammar)
+    message: []const u8,
+    corrections: [][]const u8,
+};
+
+const Server = struct {
+    allocator: std.mem.Allocator,
+    out: *std.Io.Writer,
+    version: []const u8,
+    initialized: bool = false,
+    shutdown_requested: bool = false,
+    exit_code: ?u8 = null,
+    documents: std.StringHashMap([]const u8),
+    stored_diags: std.StringHashMap([]Diagnostic),
+
+    fn deinit(self: *Server) void {
+        var doc_it = self.documents.iterator();
+        while (doc_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.documents.deinit();
+        var diag_it = self.stored_diags.iterator();
+        while (diag_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            freeDiagnostics(self.allocator, entry.value_ptr.*);
+        }
+        self.stored_diags.deinit();
+    }
+
+    fn sendBody(self: *Server, json_body: []const u8) !void {
+        try self.out.print("Content-Length: {d}\r\n\r\n{s}", .{ json_body.len, json_body });
+    }
+
+    fn respondResult(self: *Server, id: std.json.Value, result_json: []const u8) !void {
+        var body: std.Io.Writer.Allocating = .init(self.allocator);
+        defer body.deinit();
+        try body.writer.print("{{\"jsonrpc\":\"2.0\",\"id\":", .{});
+        try writeIdValue(&body.writer, id);
+        try body.writer.print(",\"result\":{s}}}", .{result_json});
+        try self.sendBody(body.written());
+    }
+
+    fn respondError(self: *Server, id: ?std.json.Value, code: i64, message: []const u8) !void {
+        var body: std.Io.Writer.Allocating = .init(self.allocator);
+        defer body.deinit();
+        try body.writer.print("{{\"jsonrpc\":\"2.0\",\"id\":", .{});
+        if (id) |i| try writeIdValue(&body.writer, i) else try body.writer.print("null", .{});
+        try body.writer.print(",\"error\":{{\"code\":{d},\"message\":\"", .{code});
+        try writeJsonString(&body.writer, message);
+        try body.writer.print("\"}}}}", .{});
+        try self.sendBody(body.written());
+    }
+
+    fn handleMessage(self: *Server, body: []const u8) !void {
+        var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, body, .{}) catch {
+            std.debug.print("lingua lsp: malformed JSON, skipping\n", .{});
+            return;
+        };
+        defer parsed.deinit();
+
+        const method_val = getMember(parsed.value, "method") orelse return; // client responses: ignore
+        if (method_val != .string) return;
+        const method = method_val.string;
+        const id = getMember(parsed.value, "id");
+        const params = getMember(parsed.value, "params") orelse .null;
+
+        if (std.mem.eql(u8, method, "exit")) {
+            self.exit_code = if (self.shutdown_requested) 0 else 1;
+            return;
+        }
+
+        if (!self.initialized and !std.mem.eql(u8, method, "initialize")) {
+            if (id) |i| try self.respondError(i, -32002, "server not initialized");
+            return;
+        }
+
+        if (std.mem.eql(u8, method, "initialize")) {
+            const rid = id orelse return; // initialize is always a request
+            self.initialized = true;
+            var result: std.Io.Writer.Allocating = .init(self.allocator);
+            defer result.deinit();
+            try result.writer.print(
+                "{{\"capabilities\":{{\"textDocumentSync\":1,\"codeActionProvider\":true,\"positionEncoding\":\"utf-16\"}},\"serverInfo\":{{\"name\":\"lingua\",\"version\":\"{s}\"}}}}",
+                .{self.version},
+            );
+            try self.respondResult(rid, result.written());
+        } else if (std.mem.eql(u8, method, "initialized")) {
+            // no-op
+        } else if (std.mem.eql(u8, method, "shutdown")) {
+            const rid = id orelse return;
+            self.shutdown_requested = true;
+            try self.respondResult(rid, "null");
+        } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
+            try self.handleDidOpen(params);
+        } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
+            try self.handleDidChange(params);
+        } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
+            try self.handleDidClose(params);
+        } else if (std.mem.eql(u8, method, "textDocument/codeAction")) {
+            try self.handleCodeAction(id.?, params);
+        } else if (id) |i| {
+            try self.respondError(i, -32601, "method not found");
+        }
+        // Unknown notifications: ignored.
+    }
+
+    // Filled in by later tasks; stubs keep this task self-contained.
+    fn handleDidOpen(self: *Server, params: std.json.Value) !void {
+        _ = self;
+        _ = params;
+    }
+    fn handleDidChange(self: *Server, params: std.json.Value) !void {
+        _ = self;
+        _ = params;
+    }
+    fn handleDidClose(self: *Server, params: std.json.Value) !void {
+        _ = self;
+        _ = params;
+    }
+    fn handleCodeAction(self: *Server, id: std.json.Value, params: std.json.Value) !void {
+        _ = params;
+        try self.respondResult(id, "[]");
+    }
+};
+
+pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []Diagnostic) void {
+    for (diags) |d| {
+        allocator.free(d.message);
+        for (d.corrections) |c| allocator.free(c);
+        allocator.free(d.corrections);
+    }
+    allocator.free(diags);
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+pub fn run(allocator: std.mem.Allocator, init: std.process.Init, version: []const u8) !void {
+    var stdin_buf: [4096]u8 = undefined;
+    var stdin_reader = std.Io.File.stdin().readerStreaming(init.io, &stdin_buf);
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
+
+    var server = Server{
+        .allocator = allocator,
+        .out = &stdout_writer.interface,
+        .version = version,
+        .documents = std.StringHashMap([]const u8).init(allocator),
+        .stored_diags = std.StringHashMap([]Diagnostic).init(allocator),
+    };
+    defer server.deinit();
+
+    while (server.exit_code == null) {
+        const maybe_body = readMessage(allocator, &stdin_reader.interface) catch |err| blk: {
+            std.debug.print("lingua lsp: read error: {s}\n", .{@errorName(err)});
+            break :blk null;
+        };
+        const body = maybe_body orelse break; // EOF -> clean exit 0
+        defer allocator.free(body);
+        server.handleMessage(body) catch |err| {
+            std.debug.print("lingua lsp: error handling message: {s}\n", .{@errorName(err)});
+        };
+        try server.out.flush();
+    }
+    try server.out.flush();
+    std.process.exit(server.exit_code orelse 0);
+}

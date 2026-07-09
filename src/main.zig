@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const nlp = @import("nlp");
+const lsp = @import("lsp.zig");
 
 const version = "0.3.0";
 
@@ -21,6 +22,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  tokenize   Tokenize text into words, sentences, or paragraphs
         \\  grammar    Check grammar (exit 1 if issues found)
         \\  spell      Check spelling (exit 1 if issues found)
+        \\  lsp        Run an LSP server (grammar/spelling diagnostics for editors)
         \\  help       Show this help message
         \\  completions  Generate shell completion scripts (bash, zsh, fish)
         \\
@@ -762,6 +764,11 @@ pub fn main(init: std.process.Init) !void {
         };
         try cmdCompletions(&stdout.interface, shell);
         try stdout.interface.flush();
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "lsp")) {
+        try lsp.run(allocator, init, version);
         return;
     }
 
