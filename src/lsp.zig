@@ -1,5 +1,6 @@
 // LSP server for lingua: JSON-RPC framing, dispatch, and diagnostics.
 const std = @import("std");
+const nlp = @import("nlp");
 
 // ---------------------------------------------------------------------------
 // Offset conversion (UTF-16 code units -> LSP line/character)
@@ -342,19 +343,140 @@ const Server = struct {
         // Unknown notifications: ignored.
     }
 
-    // Filled in by later tasks; stubs keep this task self-contained.
     fn handleDidOpen(self: *Server, params: std.json.Value) !void {
-        _ = self;
-        _ = params;
+        const td = getMember(params, "textDocument") orelse return;
+        const uri_val = getMember(td, "uri") orelse return;
+        const text_val = getMember(td, "text") orelse return;
+        if (uri_val != .string or text_val != .string) return;
+        try self.setDocument(uri_val.string, text_val.string);
+        try self.checkAndPublish(uri_val.string);
     }
+
     fn handleDidChange(self: *Server, params: std.json.Value) !void {
-        _ = self;
-        _ = params;
+        const td = getMember(params, "textDocument") orelse return;
+        const uri_val = getMember(td, "uri") orelse return;
+        if (uri_val != .string) return;
+        const changes = getMember(params, "contentChanges") orelse return;
+        if (changes != .array or changes.array.items.len == 0) return;
+        // Full sync: the last change carries the complete new text.
+        const last = changes.array.items[changes.array.items.len - 1];
+        const text_val = getMember(last, "text") orelse return;
+        if (text_val != .string) return;
+        try self.setDocument(uri_val.string, text_val.string);
+        try self.checkAndPublish(uri_val.string);
     }
+
     fn handleDidClose(self: *Server, params: std.json.Value) !void {
-        _ = self;
-        _ = params;
+        const td = getMember(params, "textDocument") orelse return;
+        const uri_val = getMember(td, "uri") orelse return;
+        if (uri_val != .string) return;
+        if (self.documents.fetchRemove(uri_val.string)) |entry| {
+            self.allocator.free(entry.key);
+            self.allocator.free(entry.value);
+        }
+        if (self.stored_diags.fetchRemove(uri_val.string)) |entry| {
+            self.allocator.free(entry.key);
+            freeDiagnostics(self.allocator, entry.value);
+        }
+        try self.publishDiagnostics(uri_val.string, &.{});
     }
+
+    /// Store (or replace) a document's full text. Keys and values are owned.
+    fn setDocument(self: *Server, uri: []const u8, text: []const u8) !void {
+        const text_copy = try self.allocator.dupe(u8, text);
+        if (self.documents.getEntry(uri)) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+            entry.value_ptr.* = text_copy;
+        } else {
+            const key_copy = try self.allocator.dupe(u8, uri);
+            try self.documents.put(key_copy, text_copy);
+        }
+    }
+
+    fn checkAndPublish(self: *Server, uri: []const u8) !void {
+        const text = self.documents.get(uri) orelse return;
+
+        const spelling = nlp.checkSpelling(self.allocator, text, null) catch |err| {
+            std.debug.print("lingua lsp: spell check failed: {s}\n", .{@errorName(err)});
+            try self.storeDiagnosticsOwned(uri, try self.allocator.alloc(Diagnostic, 0));
+            return self.publishStored(uri);
+        };
+        defer nlp.freeSpellingIssues(self.allocator, spelling);
+        const grammar = nlp.checkGrammar(self.allocator, text, null) catch |err| {
+            std.debug.print("lingua lsp: grammar check failed: {s}\n", .{@errorName(err)});
+            try self.storeDiagnosticsOwned(uri, try self.allocator.alloc(Diagnostic, 0));
+            return self.publishStored(uri);
+        };
+        defer nlp.freeGrammarIssues(self.allocator, grammar);
+
+        var idx = try LineIndex.build(self.allocator, text);
+        defer idx.deinit(self.allocator);
+
+        var diags: std.ArrayList(Diagnostic) = .empty;
+        errdefer {
+            for (diags.items) |d| {
+                self.allocator.free(d.message);
+                for (d.corrections) |c| self.allocator.free(c);
+                self.allocator.free(d.corrections);
+            }
+            diags.deinit(self.allocator);
+        }
+
+        for (spelling) |issue| {
+            const msg = try std.fmt.allocPrint(self.allocator, "Possibly misspelled: '{s}'", .{issue.word});
+            try diags.append(self.allocator, .{
+                .start = idx.position(@intCast(issue.range_start)),
+                .end = idx.position(@intCast(issue.range_start + issue.range_length)),
+                .severity = 1,
+                .message = msg,
+                .corrections = try dupeStrings(self.allocator, issue.guesses),
+            });
+        }
+        for (grammar) |issue| {
+            try diags.append(self.allocator, .{
+                .start = idx.position(@intCast(issue.range_start)),
+                .end = idx.position(@intCast(issue.range_start + issue.range_length)),
+                .severity = 2,
+                .message = try self.allocator.dupe(u8, issue.description),
+                .corrections = try dupeStrings(self.allocator, issue.corrections),
+            });
+        }
+
+        const owned = try diags.toOwnedSlice(self.allocator);
+        try self.storeDiagnosticsOwned(uri, owned);
+        try self.publishStored(uri);
+    }
+
+    fn storeDiagnosticsOwned(self: *Server, uri: []const u8, diags: []Diagnostic) !void {
+        if (self.stored_diags.getEntry(uri)) |entry| {
+            freeDiagnostics(self.allocator, entry.value_ptr.*);
+            entry.value_ptr.* = diags;
+        } else {
+            const key_copy = try self.allocator.dupe(u8, uri);
+            try self.stored_diags.put(key_copy, diags);
+        }
+    }
+
+    fn publishStored(self: *Server, uri: []const u8) !void {
+        const diags: []const Diagnostic = self.stored_diags.get(uri) orelse &.{};
+        try self.publishDiagnostics(uri, diags);
+    }
+
+    fn publishDiagnostics(self: *Server, uri: []const u8, diags: []const Diagnostic) !void {
+        var body: std.Io.Writer.Allocating = .init(self.allocator);
+        defer body.deinit();
+        const w = &body.writer;
+        try w.print("{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{{\"uri\":\"", .{});
+        try writeJsonString(w, uri);
+        try w.print("\",\"diagnostics\":[", .{});
+        for (diags, 0..) |d, i| {
+            if (i > 0) try w.print(",", .{});
+            try writeDiagnosticJson(w, d);
+        }
+        try w.print("]}}}}", .{});
+        try self.sendBody(body.written());
+    }
+
     fn handleCodeAction(self: *Server, id: std.json.Value, params: std.json.Value) !void {
         _ = params;
         try self.respondResult(id, "[]");
@@ -368,6 +490,35 @@ pub fn freeDiagnostics(allocator: std.mem.Allocator, diags: []Diagnostic) void {
         allocator.free(d.corrections);
     }
     allocator.free(diags);
+}
+
+fn dupeStrings(allocator: std.mem.Allocator, strings: []const []const u8) ![][]const u8 {
+    const out = try allocator.alloc([]const u8, strings.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |s| allocator.free(s);
+        allocator.free(out);
+    }
+    for (strings, 0..) |s, i| {
+        out[i] = try allocator.dupe(u8, s);
+        filled = i + 1;
+    }
+    return out;
+}
+
+pub fn writeDiagnosticJson(w: *std.Io.Writer, d: Diagnostic) !void {
+    try w.print("{{\"range\":{{\"start\":{{\"line\":{d},\"character\":{d}}},\"end\":{{\"line\":{d},\"character\":{d}}}}},\"severity\":{d},\"source\":\"lingua\",\"message\":\"", .{
+        d.start.line, d.start.character, d.end.line, d.end.character, d.severity,
+    });
+    try writeJsonString(w, d.message);
+    try w.print("\",\"data\":{{\"corrections\":[", .{});
+    for (d.corrections, 0..) |c, i| {
+        if (i > 0) try w.print(",", .{});
+        try w.print("\"", .{});
+        try writeJsonString(w, c);
+        try w.print("\"", .{});
+    }
+    try w.print("]}}}}", .{});
 }
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,32 @@ else
   fails=$((fails + 1))
 fi
 
+OUT=$({
+  frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+  frame '{"jsonrpc":"2.0","method":"initialized","params":{}}'
+  frame '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/t.md","languageId":"markdown","version":1,"text":"He go to the store yesterday."}}}'
+  frame '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///tmp/t.md","version":2},"contentChanges":[{"text":"All clear here."}]}}'
+  frame '{"jsonrpc":"2.0","id":9,"method":"shutdown"}'
+  frame '{"jsonrpc":"2.0","method":"exit"}'
+} | "$LINGUA" lsp 2>/dev/null)
+
+check "didOpen publishes grammar diagnostic" '"severity":2' "$OUT"
+check "grammar diagnostic at line 0 char 3" '"start":{"line":0,"character":3}' "$OUT"
+check "grammar diagnostic ends at char 5" '"end":{"line":0,"character":5}' "$OUT"
+check "diagnostic carries source" '"source":"lingua"' "$OUT"
+check "didChange to clean text clears diagnostics" '"diagnostics":[]' "$OUT"
+
+OUT=$({
+  frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+  frame '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/s.md","languageId":"markdown","version":1,"text":"I recieve emails."}}}'
+  frame '{"jsonrpc":"2.0","id":9,"method":"shutdown"}'
+  frame '{"jsonrpc":"2.0","method":"exit"}'
+} | "$LINGUA" lsp 2>/dev/null)
+
+check "spelling diagnostic is severity 1" '"severity":1' "$OUT"
+check "spelling message names the word" "Possibly misspelled: 'recieve'" "$OUT"
+check "spelling corrections in data" '"corrections":["receive"' "$OUT"
+
 if [ "$fails" -eq 0 ]; then
   echo "All lsp smoke tests passed"
 else
