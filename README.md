@@ -2,7 +2,7 @@
 
 Natural language processing from the command line, powered by native macOS APIs.
 
-Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling and grammar checking, and tokenization — all on-device, no API keys, no downloads, no network calls.
+Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling and grammar checking, an English LSP server, and tokenization — all on-device, no API keys, no downloads, no network calls.
 
 Written in Zig. Uses Apple's NaturalLanguage framework, NSSpellChecker, and NSDataDetector via Objective-C runtime bindings.
 
@@ -134,6 +134,33 @@ $ echo "It happened again again." | lingua grammar --json
 [{"type":"grammar","value":"again again","description":"The word ‘again’ may be inadvertently doubled.  Consider deleting the second instance.","corrections":["again"],"range":[12,11]}]
 ```
 
+### English LSP
+
+`lingua lsp` runs a Language Server Protocol server over stdio, turning any
+LSP-capable editor into an English grammar and spelling checker: squiggles
+for issues, quick fixes from the system spell checker’s suggestions. Powered
+by the same `grammar`/`spell` machinery.
+
+```bash
+lingua lsp   # speaks LSP over stdin/stdout; run it from an editor, not a terminal
+```
+
+**VS Code:** a development-mode extension lives in
+[`editors/vscode`](editors/vscode) — open that folder in VS Code, `npm
+install && npm run compile`, press F5, and open a markdown file in the
+development host.
+
+**Neovim** needs no plugin:
+
+```lua
+vim.api.nvim_create_autocmd(‘FileType’, {
+  pattern = { ‘markdown’, ‘text’, ‘gitcommit’ },
+  callback = function()
+    vim.lsp.start({ name = ‘lingua’, cmd = { ‘lingua’, ‘lsp’ } })
+  end,
+})
+```
+
 ## Composability
 
 lingua reads from stdin and writes to stdout, so it pipes naturally with other tools:
@@ -164,6 +191,7 @@ echo "Call 555-1234 on Tuesday" | lingua entities --json | jq '.[] | select(.typ
 | `tokenize` | Tokenize into words, sentences, or paragraphs |
 | `spell` | Check spelling (exit 1 if issues found) |
 | `grammar` | Check grammar — agreement, doubled words (exit 1 if issues found) |
+| `lsp` | Run a Language Server Protocol server (diagnostics + quick fixes) |
 
 ## Options
 

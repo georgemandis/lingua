@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const nlp = @import("nlp");
 const lsp = @import("lsp.zig");
 
-const version = "0.3.0";
+const version = "0.4.0";
 
 fn printUsage(writer: *std.Io.Writer) !void {
     try writer.print(
@@ -514,7 +514,7 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\    local cur prev words cword
             \\    _init_completion || return
             \\
-            \\    local commands="detect sentiment entities ner lemma pos tokenize grammar spell help completions"
+            \\    local commands="detect sentiment entities ner lemma pos tokenize grammar spell lsp help completions"
             \\
             \\    if [[ $cword -eq 1 ]]; then
             \\        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -570,6 +570,7 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\        'tokenize:Tokenize text'
             \\        'grammar:Check grammar'
             \\        'spell:Check spelling'
+            \\        'lsp:Run an LSP server'
             \\        'help:Show help message'
             \\        'completions:Generate shell completion scripts'
             \\    )
@@ -651,6 +652,7 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\complete -c lingua -n '__fish_use_subcommand' -a tokenize   -d 'Tokenize text'
             \\complete -c lingua -n '__fish_use_subcommand' -a grammar    -d 'Check grammar'
             \\complete -c lingua -n '__fish_use_subcommand' -a spell      -d 'Check spelling'
+            \\complete -c lingua -n '__fish_use_subcommand' -a lsp        -d 'Run an LSP server'
             \\complete -c lingua -n '__fish_use_subcommand' -a help       -d 'Show help message'
             \\complete -c lingua -n '__fish_use_subcommand' -a completions -d 'Generate shell completion scripts'
             \\
