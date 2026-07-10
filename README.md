@@ -136,10 +136,11 @@ $ echo "It happened again again." | lingua grammar --json
 
 ### English LSP
 
-`lingua lsp` runs a Language Server Protocol server over stdio, turning any
-LSP-capable editor into an English grammar and spelling checker: squiggles
-for issues, quick fixes from the system spell checker's suggestions. Powered
-by the same `grammar`/`spell` machinery.
+`lingua lsp` (lingua 0.4.0+) runs a Language Server Protocol server over
+stdio, turning any LSP-capable editor into an English grammar and spelling
+checker. Spelling issues appear as errors (red squiggles) with quick fixes
+from the system spell checker's suggestions; grammar issues appear as
+warnings (yellow squiggles). Powered by the same `grammar`/`spell` machinery.
 
 ```bash
 lingua lsp   # speaks LSP over stdin/stdout; run it from an editor, not a terminal
@@ -147,8 +148,10 @@ lingua lsp   # speaks LSP over stdin/stdout; run it from an editor, not a termin
 
 **VS Code:** a development-mode extension lives in
 [`editors/vscode`](editors/vscode) — open that folder in VS Code, `npm
-install && npm run compile`, press F5, and open a markdown file in the
-development host.
+install && npm run compile`, press F5, and open a markdown, plain text, or
+git commit file in the development host. The extension launches `lingua`
+from your `PATH` by default; to use a different binary (say, a local
+`zig-out/bin/lingua` build), set the `lingua.path` setting.
 
 **Neovim** needs no plugin:
 
