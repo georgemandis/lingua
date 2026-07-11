@@ -1,6 +1,7 @@
 // LSP server for lingua: JSON-RPC framing, dispatch, and diagnostics.
 const std = @import("std");
 const nlp = @import("nlp");
+const style = @import("style.zig");
 
 // ---------------------------------------------------------------------------
 // Offset conversion (UTF-16 code units -> LSP line/character)
@@ -409,6 +410,14 @@ const Server = struct {
         };
         defer nlp.freeGrammarIssues(self.allocator, grammar);
 
+        // Style findings are additive: if the analysis fails, keep the
+        // spelling/grammar diagnostics and log rather than bailing out.
+        const style_issues: ?[]style.StyleIssue = style.analyze(self.allocator, text, .{}) catch |err| blk: {
+            std.debug.print("lingua lsp: style check failed: {s}\n", .{@errorName(err)});
+            break :blk null;
+        };
+        defer if (style_issues) |si| style.freeStyleIssues(self.allocator, si);
+
         var idx = try LineIndex.build(self.allocator, text);
         defer idx.deinit(self.allocator);
 
@@ -440,6 +449,18 @@ const Server = struct {
                 .message = try self.allocator.dupe(u8, issue.description),
                 .corrections = try dupeStrings(self.allocator, issue.corrections),
             });
+        }
+
+        if (style_issues) |si| {
+            for (si) |issue| {
+                try diags.append(self.allocator, .{
+                    .start = idx.position(@intCast(issue.range_start)),
+                    .end = idx.position(@intCast(issue.range_start + issue.range_length)),
+                    .severity = 3,
+                    .message = try self.allocator.dupe(u8, issue.description),
+                    .corrections = try dupeStrings(self.allocator, &.{}),
+                });
+            }
         }
 
         const owned = try diags.toOwnedSlice(self.allocator);

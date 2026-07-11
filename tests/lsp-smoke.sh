@@ -112,6 +112,17 @@ else
   fails=$((fails + 1))
 fi
 
+OUT=$({
+  frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+  frame '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/w.md","languageId":"markdown","version":1,"text":"Mistakes were made by the team."}}}'
+  frame '{"jsonrpc":"2.0","id":9,"method":"shutdown"}'
+  frame '{"jsonrpc":"2.0","method":"exit"}'
+} | "$LINGUA" lsp 2>/dev/null)
+
+check "style diagnostic is severity 3" '"severity":3' "$OUT"
+check "style diagnostic message" "passive voice: 'were made'" "$OUT"
+check "style diagnostic range" '"start":{"line":0,"character":9}' "$OUT"
+
 if [ "$fails" -eq 0 ]; then
   echo "All lsp smoke tests passed"
 else
