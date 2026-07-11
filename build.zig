@@ -67,4 +67,17 @@ pub fn build(b: *std.Build) void {
     const run_lsp_tests = b.addRunArtifact(lsp_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lsp_tests.step);
+
+    const style_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/style.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nlp", .module = nlp_mod },
+            },
+        }),
+    });
+    const run_style_tests = b.addRunArtifact(style_tests);
+    test_step.dependOn(&run_style_tests.step);
 }
