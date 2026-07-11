@@ -2,6 +2,7 @@
 // Rule logic is pure (operates on pre-tagged tokens) so it unit-tests
 // without macOS framework calls; analyze() composes the nlp module.
 const std = @import("std");
+const nlp = @import("nlp");
 
 pub const Rule = enum { passive, adverbs, sentence_length };
 
@@ -85,6 +86,123 @@ pub fn countAdverbs(tokens: []const TaggedToken) usize {
         if (std.mem.eql(u8, t.tag, "Adverb")) count += 1;
     }
     return count;
+}
+
+// ---------------------------------------------------------------------------
+// Orchestration (composes the nlp module; macOS-backed)
+// ---------------------------------------------------------------------------
+
+/// Analyze text for style findings, sorted by range start. Ranges are
+/// absolute UTF-16 code-unit offsets. Caller frees via freeStyleIssues.
+pub fn analyze(allocator: std.mem.Allocator, text: []const u8, opts: Options) nlp.NlpError![]StyleIssue {
+    var issues: std.ArrayList(StyleIssue) = .empty;
+    errdefer {
+        for (issues.items) |it| {
+            allocator.free(it.value);
+            allocator.free(it.description);
+        }
+        issues.deinit(allocator);
+    }
+
+    const sentences = try nlp.tokenize(allocator, text, .sentence);
+    defer nlp.freeTokenResults(allocator, sentences);
+
+    for (sentences) |sentence| {
+        const words = try nlp.tokenize(allocator, sentence.token, .word);
+        defer nlp.freeTokenResults(allocator, words);
+        const pos_tags = try nlp.tagPartsOfSpeech(allocator, sentence.token);
+        defer nlp.freePosTags(allocator, pos_tags);
+        const lemmas = try nlp.lemmatize(allocator, sentence.token);
+        defer nlp.freeLemmaResults(allocator, lemmas);
+
+        // All three derive from the same word segmentation, so they align
+        // index-for-index; zip to the shortest to stay in bounds if they
+        // ever disagree.
+        const n = @min(words.len, @min(pos_tags.len, lemmas.len));
+        const tagged = allocator.alloc(TaggedToken, n) catch return nlp.NlpError.OutOfMemory;
+        defer allocator.free(tagged);
+        for (0..n) |k| {
+            tagged[k] = .{
+                .token = words[k].token,
+                .tag = pos_tags[k].tag,
+                .lemma = lemmas[k].lemma,
+                .range_start = words[k].range_start,
+                .range_length = words[k].range_length,
+            };
+        }
+
+        // Passive voice
+        const spans = findPassives(allocator, tagged) catch return nlp.NlpError.OutOfMemory;
+        defer allocator.free(spans);
+        for (spans) |span| {
+            const first = tagged[span.start_index];
+            const last = tagged[span.end_index];
+            const value = joinTokens(allocator, tagged[span.start_index .. span.end_index + 1]) catch return nlp.NlpError.OutOfMemory;
+            const description = std.fmt.allocPrint(allocator, "passive voice: '{s}'", .{value}) catch return nlp.NlpError.OutOfMemory;
+            issues.append(allocator, .{
+                .rule = .passive,
+                .value = value,
+                .description = description,
+                .range_start = sentence.range_start + first.range_start,
+                .range_length = (last.range_start + last.range_length) - first.range_start,
+            }) catch return nlp.NlpError.OutOfMemory;
+        }
+
+        // Adverb density
+        const adverb_count = countAdverbs(tagged);
+        if (adverb_count >= opts.max_adverbs) {
+            const value = allocator.dupe(u8, sentence.token) catch return nlp.NlpError.OutOfMemory;
+            const description = std.fmt.allocPrint(allocator, "{d} adverbs in one sentence", .{adverb_count}) catch return nlp.NlpError.OutOfMemory;
+            issues.append(allocator, .{
+                .rule = .adverbs,
+                .value = value,
+                .description = description,
+                .range_start = sentence.range_start,
+                .range_length = sentence.range_length,
+            }) catch return nlp.NlpError.OutOfMemory;
+        }
+
+        // Sentence length
+        if (words.len > opts.max_words) {
+            const value = allocator.dupe(u8, sentence.token) catch return nlp.NlpError.OutOfMemory;
+            const description = std.fmt.allocPrint(allocator, "sentence has {d} words (max {d})", .{ words.len, opts.max_words }) catch return nlp.NlpError.OutOfMemory;
+            issues.append(allocator, .{
+                .rule = .sentence_length,
+                .value = value,
+                .description = description,
+                .range_start = sentence.range_start,
+                .range_length = sentence.range_length,
+            }) catch return nlp.NlpError.OutOfMemory;
+        }
+    }
+
+    const owned = issues.toOwnedSlice(allocator) catch return nlp.NlpError.OutOfMemory;
+    std.mem.sort(StyleIssue, owned, {}, struct {
+        fn lessThan(_: void, a: StyleIssue, b: StyleIssue) bool {
+            return a.range_start < b.range_start;
+        }
+    }.lessThan);
+    return owned;
+}
+
+pub fn freeStyleIssues(allocator: std.mem.Allocator, issues: []StyleIssue) void {
+    for (issues) |i| {
+        allocator.free(i.value);
+        allocator.free(i.description);
+    }
+    allocator.free(issues);
+}
+
+/// Join token surface forms with single spaces (display text for spans;
+/// avoids slicing UTF-8 bytes by UTF-16 offsets).
+fn joinTokens(allocator: std.mem.Allocator, tokens: []const TaggedToken) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    for (tokens, 0..) |t, i| {
+        if (i > 0) try out.writer.print(" ", .{});
+        try out.writer.print("{s}", .{t.token});
+    }
+    return out.toOwnedSlice();
 }
 
 // ---------------------------------------------------------------------------

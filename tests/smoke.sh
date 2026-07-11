@@ -68,6 +68,32 @@ expect "grammar json shape" 1 '"type":"grammar"' "$out" $code
 out=$(printf "" | "$LINGUA" grammar 2>&1); code=$?
 expect "grammar empty input exits 2" 2 "empty input" "$out" $code
 
+# --- style ---
+
+out=$(echo "Mistakes were made by the team." | "$LINGUA" style); code=$?
+expect "style flags passive voice" 1 "passive voice: 'were made' [9,9]" "$out" $code
+
+out=$(echo "She quickly and quietly definitely ran extremely fast." | "$LINGUA" style); code=$?
+expect "style flags adverb pile-up" 1 "5 adverbs in one sentence" "$out" $code
+
+out=$(echo "The committee decided that the proposal needs another full review next quarter because several members raised concerns about the budget, the timeline, the staffing plan, and the overall scope of the entire project." | "$LINGUA" style); code=$?
+expect "style flags long sentence" 1 "sentence has 33 words (max 30)" "$out" $code
+
+out=$(echo "The cat sat on the mat." | "$LINGUA" style); code=$?
+expect "style clean input exits 0" 0 "" "$out" $code
+
+out=$(echo "Mistakes were made by the team." | "$LINGUA" style --json); code=$?
+expect "style json shape" 1 '"type":"style","rule":"passive","value":"were made"' "$out" $code
+
+out=$(echo "He ran quickly and quietly." | "$LINGUA" style --max-adverbs=2); code=$?
+expect "style threshold override" 1 "2 adverbs in one sentence" "$out" $code
+
+out=$(echo "He ran quickly and quietly." | "$LINGUA" style); code=$?
+expect "style default threshold not tripped by 2 adverbs" 0 "" "$out" $code
+
+out=$(printf "" | "$LINGUA" style 2>&1); code=$?
+expect "style empty input exits 2" 2 "empty input" "$out" $code
+
 # --- summary ---
 
 if [ "$fails" -eq 0 ]; then

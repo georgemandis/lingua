@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const nlp = @import("nlp");
 const lsp = @import("lsp.zig");
+const style = @import("style.zig");
 
 const version = "0.4.0";
 
@@ -23,6 +24,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  grammar    Check grammar (exit 1 if issues found)
         \\  spell      Check spelling (exit 1 if issues found)
         \\  lsp        Run an LSP server (grammar/spelling diagnostics for editors)
+        \\  style      Check writing style: passive voice, adverbs, length (exit 1 if issues found)
         \\  help       Show this help message
         \\  completions  Generate shell completion scripts (bash, zsh, fish)
         \\
@@ -54,6 +56,10 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\
         \\  grammar, spell:
         \\    --lang=XX          Force language (default: auto-detect)
+        \\
+        \\  style:
+        \\    --max-words=N      Flag sentences longer than N words (default: 30)
+        \\    --max-adverbs=N    Flag sentences with N or more adverbs (default: 3)
         \\
         \\Created by George Mandis <george@mand.is>
         \\
@@ -507,6 +513,39 @@ fn cmdSpell(
     return results.len;
 }
 
+fn cmdStyle(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    json_mode: bool,
+    opts: style.Options,
+) !usize {
+    const results = style.analyze(allocator, text, opts) catch |err| {
+        try printNlpError(writer, err, json_mode);
+        try writer.flush();
+        std.process.exit(2);
+    };
+    defer style.freeStyleIssues(allocator, results);
+
+    if (json_mode) {
+        try writer.print("[", .{});
+        for (results, 0..) |r, i| {
+            if (i > 0) try writer.print(",", .{});
+            try writer.print("{{\"type\":\"style\",\"rule\":\"{s}\",\"value\":\"", .{style.ruleName(r.rule)});
+            try writeJsonString(writer, r.value);
+            try writer.print("\",\"description\":\"", .{});
+            try writeJsonString(writer, r.description);
+            try writer.print("\",\"range\":[{d},{d}]}}", .{ r.range_start, r.range_length });
+        }
+        try writer.print("]\n", .{});
+    } else {
+        for (results) |r| {
+            try writer.print("style: {s} [{d},{d}]\n", .{ r.description, r.range_start, r.range_length });
+        }
+    }
+    return results.len;
+}
+
 fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
     if (std.mem.eql(u8, shell, "bash")) {
         try writer.print(
@@ -783,6 +822,8 @@ pub fn main(init: std.process.Init) !void {
     var merge_entities = false;
     var lang: ?[]const u8 = null;
     var inline_text: ?[]const u8 = null;
+    var max_words: usize = 30;
+    var max_adverbs: usize = 3;
 
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--json")) {
@@ -815,6 +856,18 @@ pub fn main(init: std.process.Init) !void {
             type_filter = arg["--type=".len..];
         } else if (std.mem.startsWith(u8, arg, "--lang=")) {
             lang = arg["--lang=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--max-words=")) {
+            max_words = std.fmt.parseInt(usize, arg["--max-words=".len..], 10) catch {
+                try stderr.interface.print("Error: invalid --max-words value\n", .{});
+                try stderr.interface.flush();
+                std.process.exit(2);
+            };
+        } else if (std.mem.startsWith(u8, arg, "--max-adverbs=")) {
+            max_adverbs = std.fmt.parseInt(usize, arg["--max-adverbs=".len..], 10) catch {
+                try stderr.interface.print("Error: invalid --max-adverbs value\n", .{});
+                try stderr.interface.flush();
+                std.process.exit(2);
+            };
         } else if (std.mem.startsWith(u8, arg, "-")) {
             try stderr.interface.print("Error: unknown flag: {s}\n", .{arg});
             try stderr.interface.flush();
@@ -827,7 +880,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    const is_lint = std.mem.eql(u8, command, "grammar") or std.mem.eql(u8, command, "spell");
+    const is_lint = std.mem.eql(u8, command, "grammar") or std.mem.eql(u8, command, "spell") or std.mem.eql(u8, command, "style");
 
     // Get input text
     const text = if (inline_text) |t|
@@ -872,6 +925,11 @@ pub fn main(init: std.process.Init) !void {
         return;
     } else if (std.mem.eql(u8, command, "spell")) {
         const issue_count = try cmdSpell(&stdout.interface, allocator, text, json_mode, lang);
+        try stdout.interface.flush();
+        if (issue_count > 0) std.process.exit(1);
+        return;
+    } else if (std.mem.eql(u8, command, "style")) {
+        const issue_count = try cmdStyle(&stdout.interface, allocator, text, json_mode, .{ .max_words = max_words, .max_adverbs = max_adverbs });
         try stdout.interface.flush();
         if (issue_count > 0) std.process.exit(1);
         return;
