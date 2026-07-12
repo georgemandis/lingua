@@ -2,7 +2,7 @@
 
 Natural language processing from the command line, powered by native macOS APIs.
 
-Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling and grammar checking, an English LSP server, and tokenization — all on-device, no API keys, no downloads, no network calls.
+Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling, grammar, and style checking, an English LSP server, and tokenization — all on-device, no API keys, no downloads, no network calls.
 
 Written in Zig. Uses Apple's NaturalLanguage framework, NSSpellChecker, and NSDataDetector via Objective-C runtime bindings.
 
@@ -134,13 +134,28 @@ $ echo "It happened again again." | lingua grammar --json
 [{"type":"grammar","value":"again again","description":"The word ‘again’ may be inadvertently doubled.  Consider deleting the second instance.","corrections":["again"],"range":[12,11]}]
 ```
 
+### Style Checking
+
+Informal writing-style checks built on the part-of-speech tagger: passive
+voice, adverb pile-ups, and overlong sentences. English only. Exits 1 if
+issues are found.
+
+```bash
+$ echo "Mistakes were made by the team." | lingua style
+style: passive voice: ‘were made’ [9,9]
+
+$ echo "This is a test sentence that should definitely have more than twenty words in it to demonstrate the style checking feature properly." | lingua style --max-words=20
+style: 3 adverbs in one sentence [0,132]
+style: sentence has 22 words (max 20) [0,132]
+```
+
 ### English LSP
 
 `lingua lsp` (lingua 0.4.0+) runs a Language Server Protocol server over
 stdio, turning any LSP-capable editor into an English grammar and spelling
 checker. Spelling issues appear as errors (red squiggles) with quick fixes
 from the system spell checker's suggestions; grammar issues appear as
-warnings (yellow squiggles). Powered by the same `grammar`/`spell` machinery.
+warnings (yellow squiggles). Style findings (passive voice, adverb pile-ups, long sentences) appear as information-level hints (blue). Powered by the same `grammar`/`spell`/`style` machinery.
 
 ```bash
 lingua lsp   # speaks LSP over stdin/stdout; run it from an editor, not a terminal
@@ -194,6 +209,7 @@ echo "Call 555-1234 on Tuesday" | lingua entities --json | jq '.[] | select(.typ
 | `tokenize` | Tokenize into words, sentences, or paragraphs |
 | `spell` | Check spelling (exit 1 if issues found) |
 | `grammar` | Check grammar — agreement, doubled words (exit 1 if issues found) |
+| `style` | Check writing style — passive voice, adverbs, sentence length (exit 1 if issues found) |
 | `lsp` | Run a Language Server Protocol server (diagnostics + quick fixes) |
 
 ## Options
@@ -218,11 +234,15 @@ tokenize:
 
 grammar, spell:
   --lang=XX           Force language (default: auto-detect)
+
+style:
+  --max-words=N       Flag sentences longer than N words (default: 30)
+  --max-adverbs=N     Flag sentences with N or more adverbs (default: 3)
 ```
 
 ## Exit Codes
 
-`grammar` and `spell` behave like linters: exit 0 when clean, 1 when issues are found, 2 on usage or runtime errors. All other commands exit 0 on success.
+`grammar`, `spell`, and `style` behave like linters: exit 0 when clean, 1 when issues are found, 2 on usage or runtime errors. All other commands exit 0 on success.
 
 ```bash
 # Block a commit if the README has typos

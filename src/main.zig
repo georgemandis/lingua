@@ -4,7 +4,7 @@ const nlp = @import("nlp");
 const lsp = @import("lsp.zig");
 const style = @import("style.zig");
 
-const version = "0.4.0";
+const version = "0.5.0";
 
 fn printUsage(writer: *std.Io.Writer) !void {
     try writer.print(
@@ -553,7 +553,7 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\    local cur prev words cword
             \\    _init_completion || return
             \\
-            \\    local commands="detect sentiment entities ner lemma pos tokenize grammar spell lsp help completions"
+            \\    local commands="detect sentiment entities ner lemma pos tokenize grammar spell style lsp help completions"
             \\
             \\    if [[ $cword -eq 1 ]]; then
             \\        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -582,6 +582,9 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\        grammar|spell)
             \\            COMPREPLY=($(compgen -W "--lang= --json" -- "$cur"))
             \\            ;;
+            \\        style)
+            \\            COMPREPLY=($(compgen -W "--max-words= --max-adverbs= --json" -- "$cur"))
+            \\            ;;
             \\        completions)
             \\            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
             \\            ;;
@@ -609,6 +612,7 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\        'tokenize:Tokenize text'
             \\        'grammar:Check grammar'
             \\        'spell:Check spelling'
+            \\        'style:Check writing style'
             \\        'lsp:Run an LSP server'
             \\        'help:Show help message'
             \\        'completions:Generate shell completion scripts'
@@ -660,6 +664,12 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\                        '--lang=[Force language]:lang' \
             \\                        '--json[Output as JSON]'
             \\                    ;;
+            \\                style)
+            \\                    _arguments \
+            \\                        '--max-words=[Flag sentences longer than N words]:N' \
+            \\                        '--max-adverbs=[Flag sentences with N or more adverbs]:N' \
+            \\                        '--json[Output as JSON]'
+            \\                    ;;
             \\                completions)
             \\                    local -a shells
             \\                    shells=('bash' 'zsh' 'fish')
@@ -691,6 +701,7 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\complete -c lingua -n '__fish_use_subcommand' -a tokenize   -d 'Tokenize text'
             \\complete -c lingua -n '__fish_use_subcommand' -a grammar    -d 'Check grammar'
             \\complete -c lingua -n '__fish_use_subcommand' -a spell      -d 'Check spelling'
+            \\complete -c lingua -n '__fish_use_subcommand' -a style      -d 'Check writing style'
             \\complete -c lingua -n '__fish_use_subcommand' -a lsp        -d 'Run an LSP server'
             \\complete -c lingua -n '__fish_use_subcommand' -a help       -d 'Show help message'
             \\complete -c lingua -n '__fish_use_subcommand' -a completions -d 'Generate shell completion scripts'
@@ -735,6 +746,11 @@ fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
             \\# spell options
             \\complete -c lingua -n '__fish_seen_subcommand_from spell' -l lang -d 'Force language' -r
             \\complete -c lingua -n '__fish_seen_subcommand_from spell' -l json -d 'Output as JSON'
+            \\
+            \\# style options
+            \\complete -c lingua -n '__fish_seen_subcommand_from style' -l max-words   -d 'Flag sentences longer than N words' -r
+            \\complete -c lingua -n '__fish_seen_subcommand_from style' -l max-adverbs -d 'Flag sentences with N or more adverbs' -r
+            \\complete -c lingua -n '__fish_seen_subcommand_from style' -l json        -d 'Output as JSON'
             \\
             \\# completions shell argument
             \\complete -c lingua -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish' -d 'Shell type'
