@@ -142,7 +142,7 @@ issues are found.
 
 ```bash
 $ echo "Mistakes were made by the team." | lingua style
-style: passive voice: ‘were made’ [9,9]
+style: passive voice: 'were made' [9,9]
 
 $ echo "This is a test sentence that should definitely have more than twenty words in it to demonstrate the style checking feature properly." | lingua style --max-words=20
 style: 3 adverbs in one sentence [0,132]
