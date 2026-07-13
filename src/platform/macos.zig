@@ -682,6 +682,43 @@ pub fn checkGrammar(allocator: std.mem.Allocator, text: []const u8, lang: ?[]con
 }
 
 // ---------------------------------------------------------------------------
+// Dictionary Lookup (Dictionary Services)
+// ---------------------------------------------------------------------------
+
+// Dictionary Services is a plain C API on CoreFoundation types — no
+// Objective-C class involved. CFString is toll-free bridged with NSString,
+// so the existing objc string helpers create and read the strings; only
+// these three externs are new. Linked via the CoreServices framework.
+const CFRange = extern struct {
+    location: isize,
+    length: isize,
+};
+
+extern "c" fn DCSCopyTextDefinition(dictionary: ?*anyopaque, textString: objc.id, range: CFRange) ?objc.id;
+extern "c" fn CFStringGetLength(theString: objc.id) isize;
+extern "c" fn CFRelease(cf: objc.id) void;
+
+/// Look up a dictionary definition for a word or phrase using the user's
+/// active dictionaries. Returns an owned slice (caller frees) or null when
+/// no definition exists.
+pub fn define(allocator: std.mem.Allocator, term: []const u8) nlp.NlpError!?[]const u8 {
+    const pool = objc.autoreleasePoolPush();
+    defer objc.autoreleasePoolPop(pool);
+
+    const ns_term = createNSStringFromSlice(term) orelse return nlp.NlpError.DetectionFailed;
+    const term_len = CFStringGetLength(ns_term);
+    const result = DCSCopyTextDefinition(null, ns_term, .{ .location = 0, .length = term_len }) orelse return null;
+    // "Copy" rule: we own the returned CFString and must release it — but
+    // only after the bytes are duped below.
+    defer CFRelease(result);
+
+    const cstr = objc.fromNSString(result) orelse return nlp.NlpError.DetectionFailed;
+    const slice = std.mem.sliceTo(cstr, 0);
+    const owned = allocator.dupe(u8, slice) catch return nlp.NlpError.OutOfMemory;
+    return owned;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

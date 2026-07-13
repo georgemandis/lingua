@@ -25,6 +25,7 @@ fn printUsage(writer: *std.Io.Writer) !void {
         \\  spell      Check spelling (exit 1 if issues found)
         \\  lsp        Run an LSP server (grammar/spelling diagnostics for editors)
         \\  style      Check writing style: passive voice, adverbs, length (exit 1 if issues found)
+        \\  define     Look up a dictionary definition (exit 1 if not found)
         \\  help       Show this help message
         \\  completions  Generate shell completion scripts (bash, zsh, fish)
         \\
@@ -546,6 +547,32 @@ fn cmdStyle(
     return results.len;
 }
 
+fn cmdDefine(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    term: []const u8,
+    json_mode: bool,
+) !bool {
+    const definition = nlp.define(allocator, term) catch |err| {
+        try printNlpError(writer, err, json_mode);
+        try writer.flush();
+        std.process.exit(2);
+    };
+    const def = definition orelse return false;
+    defer allocator.free(def);
+
+    if (json_mode) {
+        try writer.print("{{\"term\":\"", .{});
+        try writeJsonString(writer, term);
+        try writer.print("\",\"definition\":\"", .{});
+        try writeJsonString(writer, def);
+        try writer.print("\"}}\n", .{});
+    } else {
+        try writer.print("{s}\n", .{def});
+    }
+    return true;
+}
+
 fn cmdCompletions(writer: *std.Io.Writer, shell: []const u8) !void {
     if (std.mem.eql(u8, shell, "bash")) {
         try writer.print(
@@ -896,7 +923,9 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    const is_lint = std.mem.eql(u8, command, "grammar") or std.mem.eql(u8, command, "spell") or std.mem.eql(u8, command, "style");
+    // Commands for which missing/empty input is a usage error (exit 2).
+    const strict_input = std.mem.eql(u8, command, "grammar") or std.mem.eql(u8, command, "spell") or
+        std.mem.eql(u8, command, "style") or std.mem.eql(u8, command, "define");
 
     // Get input text
     const text = if (inline_text) |t|
@@ -909,14 +938,14 @@ pub fn main(init: std.process.Init) !void {
         readStdin(allocator, init) catch {
             try stderr.interface.print("Error: no input text. Provide text as an argument or pipe via stdin.\n", .{});
             try stderr.interface.flush();
-            std.process.exit(if (is_lint) 2 else 1);
+            std.process.exit(if (strict_input) 2 else 1);
         };
     defer allocator.free(text);
 
     if (text.len == 0) {
         try stderr.interface.print("Error: empty input\n", .{});
         try stderr.interface.flush();
-        std.process.exit(if (is_lint) 2 else 1);
+        std.process.exit(if (strict_input) 2 else 1);
     }
 
     // Dispatch to command handler
@@ -948,6 +977,15 @@ pub fn main(init: std.process.Init) !void {
         const issue_count = try cmdStyle(&stdout.interface, allocator, text, json_mode, .{ .max_words = max_words, .max_adverbs = max_adverbs });
         try stdout.interface.flush();
         if (issue_count > 0) std.process.exit(1);
+        return;
+    } else if (std.mem.eql(u8, command, "define")) {
+        const found = try cmdDefine(&stdout.interface, allocator, text, json_mode);
+        try stdout.interface.flush();
+        if (!found) {
+            try stderr.interface.print("No definition found for '{s}'\n", .{text});
+            try stderr.interface.flush();
+            std.process.exit(1);
+        }
         return;
     } else {
         try stderr.interface.print("Error: unknown command '{s}'\n\n", .{command});

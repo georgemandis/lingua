@@ -120,6 +120,10 @@ pub fn checkGrammar(allocator: std.mem.Allocator, text: []const u8, lang: ?[]con
     return platform.checkGrammar(allocator, text, lang);
 }
 
+pub fn define(allocator: std.mem.Allocator, term: []const u8) NlpError!?[]const u8 {
+    return platform.define(allocator, term);
+}
+
 // ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------

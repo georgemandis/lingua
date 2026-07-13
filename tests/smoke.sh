@@ -94,6 +94,26 @@ expect "style default threshold not tripped by 2 adverbs" 0 "" "$out" $code
 out=$(printf "" | "$LINGUA" style 2>&1); code=$?
 expect "style empty input exits 2" 2 "empty input" "$out" $code
 
+# --- define ---
+
+out=$(echo "serendipity" | "$LINGUA" define); code=$?
+expect "define finds a word via stdin" 0 "noun" "$out" $code
+
+out=$("$LINGUA" define serendipity); code=$?
+expect "define takes an argument" 0 "serendipity" "$out" $code
+
+out=$("$LINGUA" define "lingua franca"); code=$?
+expect "define handles phrases" 0 "language" "$out" $code
+
+out=$("$LINGUA" define asdfqwerty 2>&1); code=$?
+expect "define unknown term exits 1" 1 "No definition found for 'asdfqwerty'" "$out" $code
+
+out=$("$LINGUA" define serendipity --json); code=$?
+expect "define json shape" 0 '"term":"serendipity","definition":"' "$out" $code
+
+out=$(printf "" | "$LINGUA" define 2>&1); code=$?
+expect "define empty input exits 2" 2 "empty input" "$out" $code
+
 # --- summary ---
 
 if [ "$fails" -eq 0 ]; then
