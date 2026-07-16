@@ -2,7 +2,7 @@
 
 Natural language processing from the command line, powered by native macOS APIs.
 
-Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling, grammar, and style checking, an English LSP server, and tokenization — all on-device, no API keys, no downloads, no network calls.
+Language detection, sentiment analysis, part-of-speech tagging, named entity recognition, structured entity extraction (phone numbers, emails, addresses, dates, flight numbers), spelling, grammar, and style checking, dictionary definitions, an English LSP server, and tokenization — all on-device, no API keys, no downloads, no network calls.
 
 Written in Zig. Uses Apple's NaturalLanguage framework, NSSpellChecker, and NSDataDetector via Objective-C runtime bindings.
 
@@ -149,6 +149,20 @@ style: 3 adverbs in one sentence [0,132]
 style: sentence has 22 words (max 20) [0,132]
 ```
 
+### Dictionary Definitions
+
+Look up any word or phrase in the dictionaries you have enabled in
+Dictionary.app — the same lookup behind force-touch. Exits 1 when no
+definition is found.
+
+```bash
+$ lingua define serendipity
+serendipity ser·en·dip·i·ty | ˌserənˈdipədē | noun the occurrence and development of events by chance in a happy or beneficial way: a fortunate stroke of serendipity | a series of small serendipities. ORIGIN 1754: coined by Horace Walpole, suggested by The Three Princes of Serendip, the title of a fairy tale in which the heroes 'were always making discoveries, by accidents and sagacity, of things they were not in quest of'. ...
+
+$ lingua define "lingua franca" --json
+{"term":"lingua franca","definition":"lingua franca lin·gua fran·ca | ˌliNGɡwə ˈfraNGkə | noun (plural lingua francas | ˈliNGɡwə ˈfraNGkəz |) a language that is adopted as a common language between speakers whose native languages are different. • historical a mixture of Italian with French, Greek, Arabic, and Spanish, formerly used in the Levant. ORIGIN late 17th century: from Italian, literally 'Frankish tongue'. ..."}
+```
+
 ### English LSP
 
 `lingua lsp` (lingua 0.4.0+) runs a Language Server Protocol server over
@@ -210,6 +224,7 @@ echo "Call 555-1234 on Tuesday" | lingua entities --json | jq '.[] | select(.typ
 | `spell` | Check spelling (exit 1 if issues found) |
 | `grammar` | Check grammar — agreement, doubled words (exit 1 if issues found) |
 | `style` | Check writing style — passive voice, adverbs, sentence length (exit 1 if issues found) |
+| `define` | Look up a dictionary definition (exit 1 if not found) |
 | `lsp` | Run a Language Server Protocol server (diagnostics + quick fixes) |
 
 ## Options
@@ -242,7 +257,7 @@ style:
 
 ## Exit Codes
 
-`grammar`, `spell`, and `style` behave like linters: exit 0 when clean, 1 when issues are found, 2 on usage or runtime errors. All other commands exit 0 on success.
+`grammar`, `spell`, and `style` behave like linters: exit 0 when clean, 1 when issues are found, 2 on usage or runtime errors. `define` exits 0 when a definition is found, 1 when not, 2 on usage errors. All other commands exit 0 on success.
 
 ```bash
 # Block a commit if the README has typos
@@ -263,6 +278,7 @@ lingua bridges to macOS native frameworks via Objective-C runtime bindings (`obj
 - **Tokenization:** [NLTokenizer](https://developer.apple.com/documentation/naturallanguage/nltokenizer)
 - **Entity extraction:** [NSDataDetector](https://developer.apple.com/documentation/foundation/nsdatadetector)
 - **Spelling, grammar:** [NSSpellChecker](https://developer.apple.com/documentation/appkit/nsspellchecker)
+- **Definitions:** [Dictionary Services](https://developer.apple.com/documentation/coreservices/1446842-dcscopytextdefinition) (`DCSCopyTextDefinition`)
 
 ## Related Projects
 
