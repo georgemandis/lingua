@@ -157,10 +157,10 @@ definition is found.
 
 ```bash
 $ lingua define serendipity
-serendipity ser·en·dip·i·ty | ˌserənˈdipədē | noun the occurrence and development of events by chance in a happy or beneficial way: a fortunate stroke of serendipity | a series of small serendipities. ORIGIN 1754: coined by Horace Walpole, suggested by The Three Princes of Serendip, the title of a fairy tale in which the heroes 'were always making discoveries, by accidents and sagacity, of things they were not in quest of'. ...
+serendipity ser·en·dip·i·ty | ˌserənˈdipədē | noun the occurrence and development of events by chance in a happy or beneficial way: a fortunate stroke of serendipity | a series of small serendipities. ORIGIN 1754: coined by Horace Walpole, suggested by The Three Princes of Serendip, the title of a fairy tale in which the heroes ‘were always making discoveries, by accidents and sagacity, of things they were not in quest of’. ...
 
 $ lingua define "lingua franca" --json
-{"term":"lingua franca","definition":"lingua franca lin·gua fran·ca | ˌliNGɡwə ˈfraNGkə | noun (plural lingua francas | ˈliNGɡwə ˈfraNGkəz |) a language that is adopted as a common language between speakers whose native languages are different. • historical a mixture of Italian with French, Greek, Arabic, and Spanish, formerly used in the Levant. ORIGIN late 17th century: from Italian, literally 'Frankish tongue'. ..."}
+{"term":"lingua franca","definition":"lingua franca lin·gua fran·ca | ˌliNGɡwə ˈfraNGkə | noun (plural lingua francas | ˈliNGɡwə ˈfraNGkəz |) a language that is adopted as a common language between speakers whose native languages are different. • historical a mixture of Italian with French, Greek, Arabic, and Spanish, formerly used in the Levant. ORIGIN late 17th century: from Italian, literally ‘Frankish tongue’. ..."}
 ```
 
 ### English LSP
