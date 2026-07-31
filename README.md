@@ -55,6 +55,11 @@ $ echo "I love this. I hate that. It was okay." | lingua sentiment --per-sentenc
 -0.8000	It was okay.
 ```
 
+Scores come from Apple's paragraph-level sentiment model and are most
+reliable on paragraph-length, opinionated text. Short factual sentences
+skew negative ("The food was good" scores -0.8), so treat single-sentence
+scores with skepticism.
+
 ### Entity Extraction
 
 Extract phone numbers, email addresses, physical addresses, dates, URLs, and flight/transit numbers using NSDataDetector.
